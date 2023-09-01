@@ -45,6 +45,8 @@ def grab_language_from_filename(x):
     if x[0].isupper():  # LIBERO-100
         if "SCENE10" in x:
             language = " ".join(x[x.find("SCENE") + 8 :].split("_"))
+        elif x.startswith("RW"):
+            language = " ".join(x.split("_")[1:])
         else:
             language = " ".join(x[x.find("SCENE") + 7 :].split("_"))
     else:
@@ -59,6 +61,7 @@ libero_suites = [
     "libero_goal",
     "libero_90",
     "libero_10",
+    "rw_all"
 ]
 task_maps = {}
 max_len = 0
@@ -167,6 +170,20 @@ class Benchmark(abc.ABC):
     def set_task_embs(self, task_embs):
         self.task_embs = task_embs
 
+class RW_CLASS(Benchmark):
+    def __init__(self, task_order_index=0):
+        super().__init__(task_order_index=task_order_index)
+
+    def _make_benchmark(self):
+        tasks = list(task_maps[self.name].values())
+        self.tasks = tasks
+        self.n_tasks = len(self.tasks)
+
+class RW_ALL(RW_CLASS):
+    def __init__(self, task_order_index=0):
+        super().__init__(task_order_index=task_order_index)
+        self.name = "rw_all"
+        self._make_benchmark()
 
 @register_benchmark
 class LIBERO_SPATIAL(Benchmark):
