@@ -210,3 +210,4 @@ libero_task_map = {
 libero_task_map['rw_all']  = libero_task_map['rw_train_set1'] + libero_task_map['rw_train_set2'] + libero_task_map['rw_train_set3'] \
             + libero_task_map['rw_train_set4'] + libero_task_map['rw_train_set5'] + libero_task_map['rw_train_set6'] \
             + libero_task_map['rw_train_set7'] + libero_task_map['rw_train_set8']
+libero_task_map['libero_100'] = libero_task_map['libero_90'] + libero_task_map['libero_10']

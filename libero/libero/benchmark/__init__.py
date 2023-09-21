@@ -1,8 +1,10 @@
 import abc
 import os
+import csv
 import glob
 import random
 import torch
+import pathlib
 
 from typing import List, NamedTuple, Type
 from libero.libero import get_libero_path
@@ -39,6 +41,8 @@ class Task(NamedTuple):
     problem_folder: str
     bddl_file: str
     init_states_file: str
+    goal_language: str
+    instructions: str
 
 
 def grab_language_from_filename(x):
@@ -54,6 +58,28 @@ def grab_language_from_filename(x):
     en = language.find(".bddl")
     return language[:en]
 
+p=pathlib.Path(__file__).parent.resolve()
+filepath=os.path.join(p, "task_annotations_multiple_ts.csv")
+instruction_mapping = {}
+max_instructions=8
+with open(filepath, 'r') as data:
+    for line in csv.DictReader(data):
+        instruction_mapping[line['task_id']] = {'instructions': [], 'goal_language': []}
+        for key in line.keys():
+            if key == 'task_id':
+                continue
+            else:
+                if key.startswith('inst'):
+                    inst_list = line[key].split('\n')
+                    # check if a value in inst_list is not empty
+                    for inst_line in inst_list:
+                        if inst_line == '' or inst_line == ' ':
+                            inst_list.remove(inst_line)
+                    instruction_mapping[line['task_id']]['instructions'].append(inst_list)
+                elif key.startswith('gl'):
+                    instruction_mapping[line['task_id']]['goal_language'].append(line[key])
+                else:
+                    raise ValueError(f"Unknown key {key}")
 
 libero_suites = [
     "libero_spatial",
@@ -61,6 +87,7 @@ libero_suites = [
     "libero_goal",
     "libero_90",
     "libero_10",
+    "libero_100",
     "rw_all"
 ]
 task_maps = {}
@@ -77,11 +104,9 @@ for libero_suite in libero_suites:
             problem_folder=libero_suite,
             bddl_file=f"{task}.bddl",
             init_states_file=f"{task}.pruned_init",
+            goal_language=instruction_mapping[task]['goal_language'] if task in instruction_mapping.keys() else None,
+            instructions=instruction_mapping[task]['instructions'] if task in instruction_mapping.keys() else None
         )
-
-        # print(language, "\n", f"{task}.bddl", "\n")
-        # print("")
-
 
 task_orders = [
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
@@ -117,7 +142,8 @@ class Benchmark(abc.ABC):
 
     def _make_benchmark(self):
         tasks = list(task_maps[self.name].values())
-        if self.name == "libero_90":
+        if self.name == "libero_90" or self.name == "libero_100" or\
+                self.name == "rw_all" :
             self.tasks = tasks
         else:
             print(f"[info] using task orders {task_orders[self.task_order_index]}")
@@ -170,6 +196,51 @@ class Benchmark(abc.ABC):
     def set_task_embs(self, task_embs):
         self.task_embs = task_embs
 
+    def set_gl_embs(self, gl_embs):
+        self.gl_embs = gl_embs
+
+    def set_inst_embs(self, inst_embs):
+        self.inst_embs = inst_embs
+
+    def set_task_tokens(self, task_tokens):
+        self.task_tokens = task_tokens
+
+    def set_inst_tokens(self, inst_tokens):
+        self.inst_tokens = inst_tokens
+
+    def set_visual_task_specifications(self, vis_task_spec):
+        self.vis_task_spec = vis_task_spec
+
+    def set_ag_task_specs(self, ag_task_specs):
+        self.ag_task_specs = ag_task_specs
+
+    def set_ai_task_specs(self, ai_task_specs):
+        self.ai_task_specs = ai_task_specs
+
+    def get_task_token(self, i):
+        return {k: v[i] for k,v in self.task_tokens.items()}
+
+    def get_visual_task_specification(self, i):
+        return self.vis_task_spec[i]
+
+    def get_gl_emb(self, i):
+        return self.gl_embs[i]
+
+    def get_inst_emb(self, i):
+        return self.inst_embs[i]
+
+    def get_inst_token(self, i):
+        inst_token = {}
+        for k,v in self.inst_tokens.items():
+            inst_token[k] = v[i]
+        return inst_token
+
+    def get_ag_task_spec(self, i):
+        return self.ag_task_specs[i]
+
+    def get_ai_task_spec(self, i):
+        return self.ai_task_specs[i]
+
 class RW_CLASS(Benchmark):
     def __init__(self, task_order_index=0):
         super().__init__(task_order_index=task_order_index)
@@ -179,10 +250,18 @@ class RW_CLASS(Benchmark):
         self.tasks = tasks
         self.n_tasks = len(self.tasks)
 
+@register_benchmark
 class RW_ALL(RW_CLASS):
     def __init__(self, task_order_index=0):
         super().__init__(task_order_index=task_order_index)
         self.name = "rw_all"
+        self._make_benchmark()
+
+@register_benchmark
+class LIBERO_100(Benchmark):
+    def __init__(self, task_order_index=0):
+        super().__init__(task_order_index=task_order_index)
+        self.name = "libero_100"
         self._make_benchmark()
 
 @register_benchmark
