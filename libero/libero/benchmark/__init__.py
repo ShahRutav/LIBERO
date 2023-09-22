@@ -88,6 +88,7 @@ libero_suites = [
     "libero_90",
     "libero_10",
     "libero_100",
+    "debug",
     "rw_all"
 ]
 task_maps = {}
@@ -143,7 +144,7 @@ class Benchmark(abc.ABC):
     def _make_benchmark(self):
         tasks = list(task_maps[self.name].values())
         if self.name == "libero_90" or self.name == "libero_100" or\
-                self.name == "rw_all" :
+                self.name == "rw_all" or self.name == "debug":
             self.tasks = tasks
         else:
             print(f"[info] using task orders {task_orders[self.task_order_index]}")
@@ -255,6 +256,16 @@ class RW_ALL(RW_CLASS):
     def __init__(self, task_order_index=0):
         super().__init__(task_order_index=task_order_index)
         self.name = "rw_all"
+        self._make_benchmark()
+
+@register_benchmark
+class DEBUG(Benchmark):
+    """
+    This is a debugging benchmark that includes only 1 task.
+    """
+    def __init__(self, task_order_index=0):
+        super().__init__()
+        self.name="debug"
         self._make_benchmark()
 
 @register_benchmark

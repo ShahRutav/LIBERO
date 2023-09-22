@@ -47,6 +47,9 @@ libero_task_map = {
         "KITCHEN_SCENE8_put_both_moka_pots_on_the_stove",
         "KITCHEN_SCENE6_put_the_yellow_and_white_mug_in_the_microwave_and_close_it",
     ],
+    "debug": [
+        "KITCHEN_SCENE3_turn_on_the_stove",
+    ],
     "libero_90": [
         "KITCHEN_SCENE10_close_the_top_drawer_of_the_cabinet",
         "KITCHEN_SCENE10_close_the_top_drawer_of_the_cabinet_and_put_the_black_bowl_on_top_of_it",
