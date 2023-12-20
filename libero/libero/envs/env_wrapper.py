@@ -6,6 +6,7 @@ import matplotlib.cm as cm
 from robosuite.utils.errors import RandomizationError
 
 import libero.libero.envs.bddl_utils as BDDLUtils
+from libero.libero.envs.skill_controller import SkillController
 from libero.libero.envs import *
 
 
@@ -268,11 +269,76 @@ class DemoRenderEnv(ControlEnv):
 
     def __init__(self, **kwargs):
         # This shouldn't be customized
-        kwargs["has_renderer"] = False
-        kwargs["has_offscreen_renderer"] = True
+        kwargs["has_renderer"] = True
+        kwargs["has_offscreen_renderer"] = False
         kwargs["render_camera"] = "frontview"
 
         super().__init__(**kwargs)
 
     def _get_observations(self):
         return self.env._get_observations()
+
+class SkillControllerEnv(ControlEnv):
+    def __init__(self, **kwargs):
+        self._action_dim = 0
+        self._skill_config = kwargs['skill_config']
+        # pass all the kwargs but skill params to the env
+        kwargs.pop('skill_config')
+        super().__init__(**kwargs)
+        self._skill_controller = SkillController(robots=self.robots, config=self._skill_config)
+
+    def reset(self):
+        # returns all the obs from the robosuite environment as configured.
+        obs = self.reset()
+        # Note: individual skills is reset at each step.
+        self._reset_skill()
+        return obs
+
+    def _reset_skill(self):
+        # Reset the action space
+        skill_dim = self.skill_controller.get_skill_dim()
+        self._action_dim = 0
+        for robot in self.env.robots:
+            param_dim = self.skill_controller.get_param_dim(robot.action_dim)
+            self._action_dim += (param_dim + skill_dim)
+
+    def step(self, action):
+        # reset the skill to current_skill
+        # reset all info variable for the skill
+        self.skill_controller.reset(action)
+        reward_sum = 0.0
+        info_list = []
+        while True:
+            action_ll = self.skill_controller.step()
+            obs, reward, done, info = self.env.step(action_ll)
+            self.env.render()
+            reward_sum += reward
+            # update the info with the observation
+            info.update(obs)
+            info_list.append(info)
+            if self.skill_controller.done():
+                break
+        return obs, reward_sum, done, info_list
+
+    @property
+    def action_spec(self):
+        low, high = [], []
+
+        skill_dim = self.skill_controller.get_skill_dim()
+
+        for robot in self.env.robots:
+            # lo, hi = robot.action_limits
+            param_dim = self.skill_controller.get_param_dim(robot.action_dim)
+            robot_dim = param_dim + skill_dim
+            lo, hi = (-1 * np.ones(robot_dim), np.ones(robot_dim))
+            low, high = np.concatenate([low, lo]), np.concatenate([high, hi])
+
+        return low, high
+
+    @property
+    def action_skill_dim(self):
+        return self.skill_controller.get_skill_dim()
+
+    @property
+    def action_dim(self):
+        return self._action_dim
