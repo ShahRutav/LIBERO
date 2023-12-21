@@ -3,7 +3,7 @@ import copy
 import numpy as np
 from .skills import (
     ReachSkill,
-    GripperSkill,
+    PickSkill,
 )
 
 class SkillController:
@@ -12,6 +12,7 @@ class SkillController:
         'reach_osc', 'reach',
         'grasp',
         'push',
+        'pick',
         'open', 'close'
     ]
 
@@ -71,6 +72,9 @@ class SkillController:
             elif skill_name == 'reach_osc':
                 skill_class = ReachOSCSkill
                 skill_config.update(self._config.get('reach_config', {}))
+            elif skill_name == 'pick':
+                skill_class = PickSkill
+                skill_config.update(self._config.get('pick_config', {}))
             elif skill_name == 'grasp':
                 skill_class = GraspSkill
                 skill_config.update(self._config.get('grasp_config', {}))
@@ -106,7 +110,6 @@ class SkillController:
 
     def reset(self, action):
         skill_name = self.get_skill_name_from_action(action)
-        print(skill_name)
         params = self.get_params_from_action(action)
         self._cur_skill = self._skills[skill_name]
 
@@ -131,7 +134,6 @@ class SkillController:
         pos, pos_is_delta = skill.get_pos_ac(info)
         ori, ori_is_delta = skill.get_ori_ac(info)
         g = skill.get_gripper_ac(info)
-        # print all actions
 
         self._pos_is_delta = pos_is_delta
         self._ori_is_delta = ori_is_delta
@@ -143,6 +145,8 @@ class SkillController:
         info = {}
         robot = self._robots[0]
         info['cur_ee_pos'] = np.array(robot.sim.data.site_xpos[robot.eef_site_id])
+        gripper_qpos = np.array([robot.sim.data.qpos[x] for x in robot._ref_gripper_joint_pos_indexes])
+        info['gripper_state'] = gripper_qpos
         return info
 
     def ac_is_delta(self):
@@ -226,6 +230,7 @@ class SkillController:
             push='orange',
             open='darkgoldenrod',
             close='gray',
+            pick='red',
         )
 
         skill_names = self.get_skill_names()
@@ -240,6 +245,7 @@ class SkillController:
             push='Push',
             open='Release',
             close='Close',
+            pick='Pick',
         )
 
         return map

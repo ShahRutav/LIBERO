@@ -39,6 +39,7 @@ class ControlEnv:
         camera_segmentations=None,
         renderer="mujoco",
         renderer_config=None,
+        control_delta=True,
         **kwargs,
     ):
         assert os.path.exists(
@@ -46,6 +47,7 @@ class ControlEnv:
         ), f"[error] {bddl_file_name} does not exist!"
 
         controller_configs = suite.load_controller_config(default_controller=controller)
+        controller_configs["control_delta"] = control_delta
 
         problem_info = BDDLUtils.get_problem_info(bddl_file_name)
         # Check if we're using a multi-armed environment and use env_configuration argument if so
@@ -286,37 +288,41 @@ class SkillControllerEnv(ControlEnv):
         kwargs.pop('skill_config')
         super().__init__(**kwargs)
         self._skill_controller = SkillController(robots=self.robots, config=self._skill_config)
+        for _ in range(20):
+            self.env.step(np.zeros(self.env._action_dim))
 
     def reset(self):
         # returns all the obs from the robosuite environment as configured.
-        obs = self.reset()
+        obs = super().reset()
         # Note: individual skills is reset at each step.
         self._reset_skill()
         return obs
 
     def _reset_skill(self):
         # Reset the action space
-        skill_dim = self.skill_controller.get_skill_dim()
+        skill_dim = self._skill_controller.get_skill_dim() # number of skills
         self._action_dim = 0
-        for robot in self.env.robots:
-            param_dim = self.skill_controller.get_param_dim(robot.action_dim)
+        for robot in self.robots:
+            param_dim = self._skill_controller.get_param_dim(robot.action_dim)
             self._action_dim += (param_dim + skill_dim)
 
     def step(self, action):
+        # action: first skill_dim indicates the skill to be executed, one hot encoded
+        # the rest of the action is the parameter of the skill
         # reset the skill to current_skill
-        # reset all info variable for the skill
-        self.skill_controller.reset(action)
+        # reset all info variable for the skill including parameter of the skill
+        self._skill_controller.reset(action)
         reward_sum = 0.0
         info_list = []
         while True:
-            action_ll = self.skill_controller.step()
-            obs, reward, done, info = self.env.step(action_ll)
+            action_ll = self._skill_controller.step()
+            obs, reward, done, info = super().step(action_ll)
             self.env.render()
             reward_sum += reward
             # update the info with the observation
             info.update(obs)
             info_list.append(info)
-            if self.skill_controller.done():
+            if self._skill_controller.done():
                 break
         return obs, reward_sum, done, info_list
 
@@ -324,11 +330,11 @@ class SkillControllerEnv(ControlEnv):
     def action_spec(self):
         low, high = [], []
 
-        skill_dim = self.skill_controller.get_skill_dim()
+        skill_dim = self._skill_controller.get_skill_dim()
 
-        for robot in self.env.robots:
+        for robot in self.robots:
             # lo, hi = robot.action_limits
-            param_dim = self.skill_controller.get_param_dim(robot.action_dim)
+            param_dim = self._skill_controller.get_param_dim(robot.action_dim)
             robot_dim = param_dim + skill_dim
             lo, hi = (-1 * np.ones(robot_dim), np.ones(robot_dim))
             low, high = np.concatenate([low, lo]), np.concatenate([high, hi])
@@ -337,8 +343,11 @@ class SkillControllerEnv(ControlEnv):
 
     @property
     def action_skill_dim(self):
-        return self.skill_controller.get_skill_dim()
+        return self._skill_controller.get_skill_dim()
 
     @property
     def action_dim(self):
         return self._action_dim
+
+    def _get_observations(self):
+        return self.env._get_observations()
