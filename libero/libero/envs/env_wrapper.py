@@ -281,13 +281,10 @@ class DemoRenderEnv(ControlEnv):
         return self.env._get_observations()
 
 class SkillControllerEnv(ControlEnv):
-    def __init__(self, **kwargs):
+    def __init__(self, skill_config, return_all_info=False, **kwargs):
         self._action_dim = 0
-        self._skill_config = kwargs['skill_config']
-        self._return_all_info = kwargs['return_all_info']
-        # pass all the kwargs but skill params to the env
-        kwargs.pop('skill_config')
-        kwargs.pop('return_all_info')
+        self._skill_config = skill_config
+        self._return_all_info = return_all_info
         super().__init__(**kwargs)
         self._skill_controller = SkillController(robots=self.robots, config=self._skill_config)
 
@@ -325,6 +322,7 @@ class SkillControllerEnv(ControlEnv):
         while True:
             action_ll = self._skill_controller.step()
             obs, reward, done, info = super().step(action_ll)
+            #self.env.render()
             reward_sum += reward
             # update the info with the observation
             if self._return_all_info:

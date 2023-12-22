@@ -203,7 +203,7 @@ class ReachSkill(BaseSkill):
 
     def reset(self, *args, **kwargs):
         super().reset(*args, *kwargs)
-        self._config['lift_height'] = self._params[2]+0.1
+        self._config['lift_height'] = self._params[2] + 0.1
         self._num_steps_steps = 0
 
     def get_pos_ac(self, info):
@@ -298,12 +298,14 @@ class PickSkill(BaseSkill):
         # the gap between the gripper fingers is 0.08 for gripper open
         gripper_close = not(np.abs(np.abs(gripper_state[0] - gripper_state[1]) - 0.08) < 0.01)
         reached_pre_lift_h = (cur_pos[2] >= self._config['lift_height'] - th)
+        reached_post_lift_h = np.abs(cur_pos[2] - self._config['lift_height']) < th
         reached_xy = (np.linalg.norm(cur_pos[0:2] - goal_pos[0:2]) < th)
         reached_xyz = (np.linalg.norm(cur_pos - goal_pos) < th)
         reached_ori = self._reached_goal_ori(info)
-        #print("gripper_close", gripper_close, "reached_pre_lift_h", reached_pre_lift_h, "reached_xy", reached_xy, "reached_xyz", reached_xyz, "reached_ori", reached_ori)
+        #print(self._state, "gripper_close", gripper_close, "reached_pre_lift_h", reached_pre_lift_h, "reached_xy", reached_xy, "reached_xyz", reached_xyz, "reached_ori", reached_ori, "reached_post_lift_h", reached_post_lift_h)
+        #print(cur_pos, goal_pos, np.linalg.norm(cur_pos[0:2] - goal_pos[0:2]))
         self._prev_state = self._state
-        if gripper_close and reached_xy and reached_ori and reached_pre_lift_h:
+        if gripper_close and reached_xy and reached_ori and reached_post_lift_h:
             self._state = 'LIFTED'
         elif gripper_close and reached_xy and reached_ori and (not reached_xyz):
             self._state = 'LIFTING'
@@ -321,7 +323,7 @@ class PickSkill(BaseSkill):
         if self._state != self._prev_state:
             # add the print statement in red color
             #print('\033[91m' + 'state changed from {} to {} while number of steps {}'.format(self._prev_state, self._state, self._num_state_steps) + '\033[0m')
-            if (self._prev_state == 'REACHED') and (self._num_state_steps < 10):
+            if (self._prev_state in ['REACHED', 'LIFTING']) and (self._num_state_steps < 10):
                 # if we are in the grasped state, atleast continue to be in one for 20 steps
                 #print('continue to be in grasp {}/{}'.format(self._num_state_steps, 50))
                 self._state = self._prev_state
@@ -335,7 +337,7 @@ class PickSkill(BaseSkill):
 
     def reset(self, *args, **kwargs):
         super().reset(*args, *kwargs)
-        self._config['lift_height'] = self._params[2]+0.1
+        self._config['lift_height'] = self._params[2] + 0.15
         self._num_steps_steps = 0
         self._num_state_steps = 0
 
@@ -409,6 +411,7 @@ class PickSkill(BaseSkill):
         object_name = kwargs['object_name']
         pos = obs[f'{object_name}_pos']
         th = self._config['reach_threshold']
+        #print('pos', pos, 'th', self._config['lift_height'] - th)
         success = (pos[2] >= self._config['lift_height'] - th)
         #print('success', success, pos[2], self._config['lift_height'] - th)
         return success
