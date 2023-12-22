@@ -249,3 +249,6 @@ class SkillController:
         )
 
         return map
+
+    def check_skill_success(self, obs, **kwargs):
+        return self._cur_skill.check_success(obs, **kwargs)

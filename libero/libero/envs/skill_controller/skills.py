@@ -103,8 +103,8 @@ class BaseSkill:
         ee_ori_mat = robot_controller.ee_ori_mat
         #cur_ori = trans.mat2euler(robot_controller.ee_ori_mat, axes="rxyz")
         cur_ori = trans.quat2axisangle(trans.mat2quat(robot_controller.ee_ori_mat))
-        print("cur_ori: ", cur_ori)
-        print("goal_ori: ", goal_ori)
+        #print("cur_ori: ", cur_ori)
+        #print("goal_ori: ", goal_ori)
 
         # check the difference between the current and goal orientation in axis-angle format
         #ee_ori_diff = np.minimum(
@@ -186,7 +186,7 @@ class ReachSkill(BaseSkill):
         reached_xy = (np.linalg.norm(cur_pos[0:2] - goal_pos[0:2]) < th)
         reached_xyz = (np.linalg.norm(cur_pos - goal_pos) < th)
         reached_ori = self._reached_goal_ori(info)
-        print(reached_lift, reached_xy, reached_xyz, reached_ori)
+        #print(reached_lift, reached_xy, reached_xyz, reached_ori)
 
         if reached_xyz and reached_ori:
             self._state = 'REACHED'
@@ -209,7 +209,7 @@ class ReachSkill(BaseSkill):
     def get_pos_ac(self, info):
         cur_pos = info['cur_ee_pos']
         goal_pos = self._get_reach_pos(info)
-        print('cur_pos', cur_pos, 'goal_pos', goal_pos, 'state', self._state)
+        #print('cur_pos', cur_pos, 'goal_pos', goal_pos, 'state', self._state)
 
         is_delta = False
         if self._state == 'INIT': # go to the pre-lift height
@@ -294,14 +294,14 @@ class PickSkill(BaseSkill):
 
         th = self._config['reach_threshold']
         # gripper is open when gripper_state is near 0.04
-        print("gripper_state:", gripper_state, np.abs(gripper_state[0] - gripper_state[1]), np.abs(np.abs(gripper_state[0] - gripper_state[1]) - 0.08))
+        #print("gripper_state:", gripper_state, np.abs(gripper_state[0] - gripper_state[1]), np.abs(np.abs(gripper_state[0] - gripper_state[1]) - 0.08))
         # the gap between the gripper fingers is 0.08 for gripper open
         gripper_close = not(np.abs(np.abs(gripper_state[0] - gripper_state[1]) - 0.08) < 0.01)
         reached_pre_lift_h = (cur_pos[2] >= self._config['lift_height'] - th)
         reached_xy = (np.linalg.norm(cur_pos[0:2] - goal_pos[0:2]) < th)
         reached_xyz = (np.linalg.norm(cur_pos - goal_pos) < th)
         reached_ori = self._reached_goal_ori(info)
-        print("gripper_close", gripper_close, "reached_pre_lift_h", reached_pre_lift_h, "reached_xy", reached_xy, "reached_xyz", reached_xyz, "reached_ori", reached_ori)
+        #print("gripper_close", gripper_close, "reached_pre_lift_h", reached_pre_lift_h, "reached_xy", reached_xy, "reached_xyz", reached_xyz, "reached_ori", reached_ori)
         self._prev_state = self._state
         if gripper_close and reached_xy and reached_ori and reached_pre_lift_h:
             self._state = 'LIFTED'
@@ -342,7 +342,7 @@ class PickSkill(BaseSkill):
     def get_pos_ac(self, info):
         cur_pos = info['cur_ee_pos']
         goal_pos = self._get_reach_pos(info)
-        print('cur_pos', cur_pos, 'goal_pos', goal_pos, 'state', self._state)
+        #print('cur_pos', cur_pos, 'goal_pos', goal_pos, 'state', self._state)
 
         is_delta = False
         if self._state == 'INIT': # go to the pre-lift height
@@ -403,6 +403,15 @@ class PickSkill(BaseSkill):
         params = self._params
         pos = params[:3]
         return pos
+
+    def check_success(self, obs, **kwargs):
+        assert 'object_name' in kwargs
+        object_name = kwargs['object_name']
+        pos = obs[f'{object_name}_pos']
+        th = self._config['reach_threshold']
+        success = (pos[2] >= self._config['lift_height'] - th)
+        #print('success', success, pos[2], self._config['lift_height'] - th)
+        return success
 
     def is_success(self, info):
         return self._state == 'LIFTED'
