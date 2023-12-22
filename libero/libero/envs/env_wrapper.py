@@ -284,8 +284,10 @@ class SkillControllerEnv(ControlEnv):
     def __init__(self, **kwargs):
         self._action_dim = 0
         self._skill_config = kwargs['skill_config']
+        self._return_all_info = kwargs['return_all_info']
         # pass all the kwargs but skill params to the env
         kwargs.pop('skill_config')
+        kwargs.pop('return_all_info')
         super().__init__(**kwargs)
         self._skill_controller = SkillController(robots=self.robots, config=self._skill_config)
 
@@ -316,16 +318,26 @@ class SkillControllerEnv(ControlEnv):
         self._skill_controller.reset(action)
         reward_sum = 0.0
         info_list = []
+        if self._return_all_info:
+            obs_list = []
+            reward_list = []
+            done_list = []
         while True:
             action_ll = self._skill_controller.step()
             obs, reward, done, info = super().step(action_ll)
-            #self.env.render()
             reward_sum += reward
             # update the info with the observation
-            info.update(obs)
+            if self._return_all_info:
+                obs_list.append(obs)
+                reward_list.append(reward)
+                done_list.append(done)
             info_list.append(info)
             if self._skill_controller.done():
                 break
+        if self._return_all_info:
+            obs = np.stack(obs_list, axis=0)
+            reward_sum = np.stack(reward_list, axis=0)
+            done = np.stack(done_list, axis=0)
         return obs, reward_sum, done, info_list
 
     def check_skill_success(self, obs=None, **kwargs):
