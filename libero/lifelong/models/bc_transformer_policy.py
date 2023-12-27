@@ -22,6 +22,7 @@ class ExtraModalityTokens(nn.Module):
         use_joint=False,
         use_gripper=False,
         use_ee=False,
+        use_goal_emb=False,
         extra_num_layers=0,
         extra_hidden_size=64,
         extra_embedding_size=32,
@@ -33,11 +34,13 @@ class ExtraModalityTokens(nn.Module):
         self.use_joint = use_joint
         self.use_gripper = use_gripper
         self.use_ee = use_ee
+        self.use_goal_emb = use_goal_emb
         self.extra_embedding_size = extra_embedding_size
 
         joint_states_dim = 7
         gripper_states_dim = 2
         ee_dim = 3
+        goal_emb_dim = 768
 
         self.num_extra = int(use_joint) + int(use_gripper) + int(use_ee)
 
@@ -68,9 +71,10 @@ class ExtraModalityTokens(nn.Module):
             self.extra_encoders[modality_name] = {"encoder": self.proprio_mlp}
 
         for (proprio_dim, use_modality, modality_name) in [
-            (joint_states_dim, self.use_joint, "joint_states"),
-            (gripper_states_dim, self.use_gripper, "gripper_states"),
+            (joint_states_dim, self.use_joint, "robot0_joint_pos"),
+            (gripper_states_dim, self.use_gripper, "robot0_gripper_qpos"),
             (ee_dim, self.use_ee, "ee_states"),
+            (goal_emb_dim, self.use_goal_emb, "goal_emb_dinov2-base"),
         ]:
 
             if use_modality:
@@ -92,9 +96,10 @@ class ExtraModalityTokens(nn.Module):
         tensor_list = []
 
         for (use_modality, modality_name) in [
-            (self.use_joint, "joint_states"),
-            (self.use_gripper, "gripper_states"),
+            (self.use_joint, "robot0_joint_pos"),
+            (self.use_gripper, "robot0_gripper_qpos"),
             (self.use_ee, "ee_states"),
+            (self.use_goal_emb, "goal_emb_dinov2-base"),
         ]:
 
             if use_modality:
@@ -183,7 +188,7 @@ class BCTransformerPolicy(BasePolicy):
         transformer_input_sizes = []
         self.image_encoders = {}
         for name in shape_meta["all_shapes"].keys():
-            if "rgb" in name or "depth" in name:
+            if ("rgb" in name) or ("depth" in name) or ("image" in name):
                 kwargs = policy_cfg.image_encoder.network_kwargs
                 kwargs.input_shape = shape_meta["all_shapes"][name]
                 kwargs.output_size = embed_size
@@ -210,6 +215,7 @@ class BCTransformerPolicy(BasePolicy):
             use_joint=cfg.data.use_joint,
             use_gripper=cfg.data.use_gripper,
             use_ee=cfg.data.use_ee,
+            use_goal_emb=cfg.data.use_goal_emb,
             extra_num_layers=policy_cfg.extra_num_layers,
             extra_hidden_size=policy_cfg.extra_hidden_size,
             extra_embedding_size=embed_size,
@@ -259,11 +265,7 @@ class BCTransformerPolicy(BasePolicy):
 
         # 2. encode language, treat it as action token
         B, T = extra.shape[:2]
-        text_encoded = self.language_encoder(data)  # (B, E)
-        text_encoded = text_encoded.view(B, 1, 1, -1).expand(
-            -1, T, -1, -1
-        )  # (B, T, 1, E)
-        encoded = [text_encoded, extra]
+        encoded = [extra]
 
         # 3. encode image
         for img_name in self.image_encoders.keys():
@@ -271,10 +273,6 @@ class BCTransformerPolicy(BasePolicy):
             B, T, C, H, W = x.shape
             img_encoded = self.image_encoders[img_name]["encoder"](
                 x.reshape(B * T, C, H, W),
-                langs=data["task_emb"]
-                .reshape(B, 1, -1)
-                .repeat(1, T, 1)
-                .reshape(B * T, -1),
             ).view(B, T, 1, -1)
             encoded.append(img_encoded)
         encoded = torch.cat(encoded, -2)  # (B, T, num_modalities, E)

@@ -2,11 +2,12 @@
 data_modality:
   - "image"
   - "proprio"
-seq_len: 10
+seq_len: 8
 frame_stack: 1
 use_eye_in_hand: true
 use_gripper: true
 use_joint: true
+use_goal_emb: true
 use_ee: false
 
 max_word_len: 25
@@ -21,10 +22,11 @@ task_order_index: 0
 shuffle_task: false
 
 obs:
-    modality:
-        rgb: ["agentview_rgb", "eye_in_hand_rgb"]
-        depth: []
-        low_dim: ["gripper_states", "joint_states"]
+  modality:
+    #rgb: ["agentview_image", "robot0_eye_in_hand_image"]
+    rgb: []
+    depth: []
+    low_dim: ["robot0_gripper_qpos", "robot0_joint_pos", "goal_emb_dinov2-base"]
 
 # mapping from obs.modality keys to robosuite environment observation keys
 obs_key_mapping:
@@ -32,6 +34,11 @@ obs_key_mapping:
   eye_in_hand_rgb: robot0_eye_in_hand_image
   gripper_states: robot0_gripper_qpos
   joint_states: robot0_joint_pos
+  robot0_gripper_qpos: robot0_gripper_qpos
+  robot0_joint_pos: robot0_joint_pos
+  goal_emb_dinov2-base: goal_emb_dinov2-base
+  agentview_image: agentview_image
+  robot0_eye_in_hand_image: robot0_eye_in_hand_image
 
 # action related
 affine_translate: 4

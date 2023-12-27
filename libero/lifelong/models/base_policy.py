@@ -59,18 +59,19 @@ class BasePolicy(nn.Module, metaclass=PolicyMeta):
 
         policy_cfg = cfg.policy
 
-        # add data augmentation for rgb inputs
-        color_aug = eval(policy_cfg.color_aug.network)(
-            **policy_cfg.color_aug.network_kwargs
-        )
+        if len(cfg.data.obs.modality.rgb) > 1:
+            # add data augmentation for rgb inputs
+            color_aug = eval(policy_cfg.color_aug.network)(
+                **policy_cfg.color_aug.network_kwargs
+            )
 
-        policy_cfg.translation_aug.network_kwargs["input_shape"] = shape_meta[
-            "all_shapes"
-        ][cfg.data.obs.modality.rgb[0]]
-        translation_aug = eval(policy_cfg.translation_aug.network)(
-            **policy_cfg.translation_aug.network_kwargs
-        )
-        self.img_aug = DataAugGroup((color_aug, translation_aug))
+            policy_cfg.translation_aug.network_kwargs["input_shape"] = shape_meta[
+                "all_shapes"
+            ][cfg.data.obs.modality.rgb[0]]
+            translation_aug = eval(policy_cfg.translation_aug.network)(
+                **policy_cfg.translation_aug.network_kwargs
+            )
+            self.img_aug = DataAugGroup((color_aug, translation_aug))
 
     def forward(self, data):
         """
@@ -109,7 +110,7 @@ class BasePolicy(nn.Module, metaclass=PolicyMeta):
             data = TensorUtils.recursive_dict_list_tuple_apply(
                 data, {torch.Tensor: lambda x: x.unsqueeze(dim=1)}  # add time dimension
             )
-            data["task_emb"] = data["task_emb"].squeeze(1)
+            #data["task_emb"] = data["task_emb"].squeeze(1)
         return data
 
     def compute_loss(self, data, reduction="mean"):

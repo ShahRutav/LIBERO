@@ -1,4 +1,4 @@
-load_path: "" # only used when separately evaluating a pretrained model
+load_dir: "" # only used when separately evaluating a pretrained model
 eval: true
 batch_size: 64
 num_workers: 4
