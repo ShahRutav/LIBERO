@@ -52,7 +52,6 @@ def create_experiment_dir(cfg):
     Path(cfg.experiment_dir).mkdir(parents=True, exist_ok=True)
     return cfg.experiment_dir
 
-
 @hydra.main(config_path="../configs", config_name="config", version_base=None)
 def main(hydra_cfg):
     # preprocessing
@@ -82,7 +81,7 @@ def main(hydra_cfg):
     descriptions = []
     shape_meta = None
 
-    dataset_path = os.path.join(cfg.folder, 'libero_gcs.hdf5')
+    dataset_path = os.path.join(cfg.folder, cfg.dataset_n)
     skill_dataset, shape_meta = get_dataset(
         dataset_path=dataset_path,
         obs_modality=cfg.data.obs.modality,
@@ -94,18 +93,28 @@ def main(hydra_cfg):
     datasets = [
         SequenceVLDataset(ds, emb) for (ds, emb) in zip(manip_datasets, task_embs)
     ]
-    n_demos = [data.n_demos for data in datasets]
-    n_sequences = [data.total_num_sequences for data in datasets]
     n_tasks = len(datasets)
+
+    val_dataset_path = os.path.join(cfg.folder, cfg.val_dataset_n)
+    val_skill_dataset, _ = get_dataset(
+        dataset_path=val_dataset_path,
+        obs_modality=cfg.data.obs.modality,
+        initialize_obs_utils=False,
+        seq_len=cfg.data.seq_len,
+    )
+    val_dataset = SequenceVLDataset(val_skill_dataset, np.zeros_like((1,)))
 
     # prepare experiment and update the config
     cfg.experiment_dir = create_experiment_dir(cfg)
-    cfg.experiment_name = os.path.basename(cfg.experiment_dir)
+    cfg.experiment_name = cfg.experiment_dir.split("/")[-2]
     cfg.shape_meta = shape_meta
 
     if cfg.use_wandb:
         wandb.init(project="libero_gcs", config=cfg)
         wandb.run.name = cfg.experiment_name
+        wandb.define_metric("epoch")
+        wandb.define_metric("train/*", "epoch")
+        wandb.define_metric("val/*", "epoch")
 
     # define lifelong algorithm
     algo = safe_device(get_algo_class(cfg.lifelong.algo)(n_tasks, cfg), cfg.device)
@@ -130,7 +139,10 @@ def main(hydra_cfg):
         algo.train()
         t0 = time.time()
         algo.learn_one_task(
-            datasets[i], i, result_summary=None
+            datasets[i],
+            val_dataset=val_dataset,
+            task_id=i, result_summary=None,
+            logger=wandb if cfg.use_wandb else None,
         )
         t1 = time.time()
 

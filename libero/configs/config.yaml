@@ -11,6 +11,8 @@ defaults:
 
 seed: 10000
 use_wandb: false
+dataset_n: libero_gcs_train.hdf5
+val_dataset_n: libero_gcs_val.hdf5
 wandb_project: "lifelong learning"
 folder: /home/rutavms/research/preference/vq_vae/dataset/libero_gcs/ # use default path
 bddl_folder: null # use default path

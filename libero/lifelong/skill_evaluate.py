@@ -90,7 +90,7 @@ def main(hydra_cfg):
     with open(cfg_path, "r") as f:
         cfg = EasyDict(yaml.safe_load(f))
 
-    dataset_path = os.path.join(cfg.folder, 'libero_gcs.hdf5')
+    dataset_path = os.path.join(cfg.folder, cfg.dataset_n)
     skill_dataset, shape_meta = get_dataset(
         dataset_path=dataset_path,
         obs_modality=cfg.data.obs.modality,
@@ -117,7 +117,6 @@ def main(hydra_cfg):
         descriptions = []
         shape_meta = None
 
-        dataset_path = os.path.join(cfg.folder, 'libero_gcs.hdf5')
         dataset = h5py.File(dataset_path, 'r')['data']
         for key in dataset.keys():
             bm = dataset[key]['meta_data/benchmark_name'][()]

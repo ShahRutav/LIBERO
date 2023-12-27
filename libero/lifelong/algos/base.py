@@ -126,7 +126,7 @@ class Sequential(nn.Module, metaclass=AlgoMeta):
             loss = self.policy.compute_loss(data)
         return loss.item()
 
-    def learn_one_task(self, dataset, task_id, result_summary):
+    def learn_one_task(self, dataset, task_id, result_summary, logger=None, val_dataset=None):
 
         self.start_task(task_id)
 
@@ -145,6 +145,15 @@ class Sequential(nn.Module, metaclass=AlgoMeta):
             sampler=RandomSampler(dataset),
             persistent_workers=True,
         )
+        val_dataloader = None
+        if val_dataset is not None:
+            val_dataloader = DataLoader(
+                val_dataset,
+                batch_size=self.cfg.train.batch_size,
+                num_workers=self.cfg.train.num_workers,
+                sampler=RandomSampler(val_dataset),
+                persistent_workers=True,
+            )
 
         prev_success_rate = -1.0
         best_state_dict = self.policy.state_dict()  # currently save the best model
@@ -155,10 +164,12 @@ class Sequential(nn.Module, metaclass=AlgoMeta):
         idx_at_best_succ = 0
         successes = []
         losses = []
+        best_val_loss = 1e10
 
         # start training
         for epoch in range(0, self.cfg.train.n_epochs + 1):
 
+            log_kv = {}
             t0 = time.time()
 
             if epoch > 0:  # update
@@ -169,14 +180,30 @@ class Sequential(nn.Module, metaclass=AlgoMeta):
                     training_loss += loss
                 training_loss /= len(train_dataloader)
             else:  # just evaluate the zero-shot performance on 0-th epoch
+                self.policy.eval()
                 training_loss = 0.0
                 for (idx, data) in tqdm(enumerate(train_dataloader), total=len(train_dataloader)):
                     loss = self.eval_observe(data)
                     training_loss += loss
                 training_loss /= len(train_dataloader)
             t1 = time.time()
+            if logger is not None:
+                log_kv["epoch"] = epoch
+                log_kv["train/loss"] = training_loss
+            print(
+                f"[info] Epoch: {epoch:3d} | train loss: {training_loss:5.2f} | time: {(t1-t0)/60:4.2f}"
+            )
+
             # save 10 checkpoints
-            if epoch % (self.cfg.train.n_epochs // 10) == 0:
+            if epoch % (self.cfg.train.n_epochs // 5) == 0:
+                val_loss = 0.0
+                self.policy.eval()
+                for (idx, data) in tqdm(enumerate(val_dataloader), total=len(val_dataloader)):
+                    loss = self.eval_observe(data)
+                    val_loss += loss
+                val_loss /= len(val_dataloader)
+                if logger is not None:
+                    log_kv["val/loss"] = val_loss
                 model_checkpoint_name = os.path.join(
                         self.experiment_dir, "models", f"task{task_id}_model_{epoch:03d}.pth"
                 )
@@ -187,11 +214,21 @@ class Sequential(nn.Module, metaclass=AlgoMeta):
                     model_path=model_checkpoint_name,
                     model=self.policy,
                 )
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    model_checkpoint_name = os.path.join(
+                            self.experiment_dir, "models", f"task{task_id}_model_best.pth"
+                    )
+                    torch_save_model(
+                        model_path=model_checkpoint_name,
+                        model=self.policy,
+                    )
+                print(
+                    f"[info] Epoch: {epoch:3d} | val loss: {val_loss:5.2f} "
+                )
 
-            print(
-                f"[info] Epoch: {epoch:3d} | train loss: {training_loss:5.2f} | time: {(t1-t0)/60:4.2f}"
-            )
-
+            if logger is not None:
+                logger.log(log_kv)
             if self.scheduler is not None and epoch > 0:
                 self.scheduler.step()
 
