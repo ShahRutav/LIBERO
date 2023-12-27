@@ -288,8 +288,8 @@ class SkillControllerEnv(ControlEnv):
         super().__init__(**kwargs)
         self._skill_controller = SkillController(robots=self.robots, config=self._skill_config)
 
-    def dummy_actions(self):
-        for _ in range(5):
+    def dummy_actions(self, num_actions=5):
+        for _ in range(num_actions):
             self.env.step(np.zeros(self.env._action_dim))
 
     def reset(self):
@@ -314,14 +314,16 @@ class SkillControllerEnv(ControlEnv):
         # reset all info variable for the skill including parameter of the skill
         self._skill_controller.reset(action)
         reward_sum = 0.0
-        info_list = []
+        obs = self._get_observations()
+        info = []
         if self._return_all_info:
             obs_list = []
             reward_list = []
             done_list = []
+            action_list = []
         while True:
             action_ll = self._skill_controller.step()
-            obs, reward, done, info = super().step(action_ll)
+            next_obs, reward, done, info = super().step(action_ll)
             #self.env.render()
             reward_sum += reward
             # update the info with the observation
@@ -329,14 +331,17 @@ class SkillControllerEnv(ControlEnv):
                 obs_list.append(obs)
                 reward_list.append(reward)
                 done_list.append(done)
-            info_list.append(info)
+                action_list.append(action_ll)
             if self._skill_controller.done():
                 break
+            obs = next_obs
         if self._return_all_info:
             obs = np.stack(obs_list, axis=0)
             reward_sum = np.stack(reward_list, axis=0)
             done = np.stack(done_list, axis=0)
-        return obs, reward_sum, done, info_list
+            action_ll = np.stack(action_list, axis=0)
+            info.update({'actions_ll': action_ll})
+        return obs, reward_sum, done, info
 
     def check_skill_success(self, obs=None, **kwargs):
         if obs is None:

@@ -23,7 +23,7 @@ def get_skill_config(skills=['reach']):
                 "use_gripper_params": True,
                 "use_ori_params": False,
                 "reach_threshold": 0.01,
-                "max_ac_calls": 500,},
+                "max_ac_calls": 100,},
         }
     return config_dict
 
