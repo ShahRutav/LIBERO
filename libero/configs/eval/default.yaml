@@ -1,4 +1,5 @@
 load_dir: "" # only used when separately evaluating a pretrained model
+eval_type: best
 eval: true
 batch_size: 64
 num_workers: 4

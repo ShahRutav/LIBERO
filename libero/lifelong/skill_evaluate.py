@@ -100,9 +100,13 @@ def main(hydra_cfg):
 
     pretrain_model_paths = os.listdir(os.path.join(experiment_dir, 'models'))
     # sort the model paths
-    pretrain_model_paths = sorted(pretrain_model_paths, key=lambda x: int(x[:-4].split('_')[-1]))
+    if eval_cfg.eval_type == 'best':
+        pretrain_model_paths = [pre_path for pre_path in pretrain_model_paths if ('model_best' in pre_path)]
+    elif eval_cfg.eval_type == 'last':
+        pretrain_model_paths = [pre_path for pre_path in pretrain_model_paths if ('model_best' not in pre_path)]
+        pretrain_model_paths = sorted(pretrain_model_paths, key=lambda x: int(x[:-4].split('_')[-1]))
+        pretrain_model_paths = pretrain_model_paths[-1:]
     pretrain_model_paths = [to_absolute_path(os.path.join(experiment_dir, 'models', x)) for x in pretrain_model_paths]
-    pretrain_model_paths = pretrain_model_paths[-1:]
     n_tasks = 1
     result_store = {}
     for pretrain_model_path in pretrain_model_paths:
@@ -117,6 +121,7 @@ def main(hydra_cfg):
         descriptions = []
         shape_meta = None
 
+        print(dataset_path)
         dataset = h5py.File(dataset_path, 'r')['data']
         for key in dataset.keys():
             bm = dataset[key]['meta_data/benchmark_name'][()]
@@ -146,7 +151,7 @@ def main(hydra_cfg):
             object_name = dataset[key]['meta_data/object_name'][()]
             object_name = object_name.decode('utf-8')
             object_name = str(object_name)
-            goal_emb = dataset[key]['goal_emb_dinov2-base'][()]
+            goal_emb = dataset[key]['obs/goal_emb_dinov2-base'][()][0]
 
             obs = env.env._get_observations()
             lift_height = obs[f'{object_name}_pos'][2] + 0.15
@@ -155,6 +160,8 @@ def main(hydra_cfg):
                 data = raw_obs_to_tensor_obs(obs, cfg, goal_emb=goal_emb)
                 actions = algo.policy.get_action(data)[0]
                 obs, reward, done, info = env.step(actions)
+                print(obs.keys())
+                # TODO: Add a closeness loss here.
                 is_success = check_success(obs, lift_height, object_name)
                 if is_success:
                     break
