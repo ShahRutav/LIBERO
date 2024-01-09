@@ -1,4 +1,5 @@
 import os
+import cv2
 import h5py
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -36,6 +37,16 @@ from libero.lifelong.utils import (
 
 import robomimic.utils.obs_utils as ObsUtils
 import robomimic.utils.tensor_utils as TensorUtils
+
+def save_video(video_list, file_name):
+    width, height, _ = video_list[0].shape
+    video = cv2.VideoWriter(file_name, cv2.VideoWriter_fourcc(*'MJPG'), 10, (width,height))
+    for image in video_list:
+        image = image[::-1,:,:]
+        image = image[:,:,::-1]
+        video.write(image)
+    cv2.destroyAllWindows()
+    video.release()
 
 def raw_obs_to_tensor_obs(obs, cfg, goal_emb):
     """
@@ -112,6 +123,7 @@ def main(hydra_cfg):
     for pretrain_model_path in pretrain_model_paths:
         num_success = 0.0
         total_trials = 0.0
+        total_avg_dist2obj = 0.0
         # define lifelong algorithm
         algo = safe_device(get_algo_class(cfg.lifelong.algo)(n_tasks, cfg), cfg.device)
         algo.policy.load_state_dict(torch_load_model(pretrain_model_path)[0])
@@ -156,25 +168,46 @@ def main(hydra_cfg):
             obs = env.env._get_observations()
             lift_height = obs[f'{object_name}_pos'][2] + 0.15
             is_success = False
-            for _ in range(120):
+            avg_dist2obj = 0.0
+            video = []
+            for ind in range(120):
                 data = raw_obs_to_tensor_obs(obs, cfg, goal_emb=goal_emb)
                 actions = algo.policy.get_action(data)[0]
                 obs, reward, done, info = env.step(actions)
-                print(obs.keys())
-                # TODO: Add a closeness loss here.
+                video.append(obs['agentview_image'])
+                # print(obs.keys())
+                robot_eef_pos = obs['robot0_eef_pos']
+                object_pos = obs[f'{object_name}_pos']
+                avg_dist2obj = (np.linalg.norm(object_pos - robot_eef_pos) + ind*avg_dist2obj)/(ind + 1)
                 is_success = check_success(obs, lift_height, object_name)
                 if is_success:
                     break
-            print("success:", is_success)
+            total_avg_dist2obj += avg_dist2obj
+
+            if False:
+                file_name = f'vid_{int(total_trials):03d}_{object_name}.avi'
+                video_dir = os.path.join(experiment_dir, 'videos')
+                video_file = os.path.join(video_dir, file_name)
+                if not os.path.exists(video_dir): os.makedirs(video_dir)
+                save_video(video_list=video, file_name=video_file)
+                print('+++ Saving', video_file)
+
             if is_success:
                 num_success += 1
+
             total_trials += 1
             env.close()
+
+            print("success:", is_success, "Avg. distance to object:", avg_dist2obj)
             # print pretrained model path in blue color
             print("\033[94m" + f"pretrained model path: {pretrain_model_path}" + "\033[0m")
             # print in red color
-            print("\033[91m" + f"success rate: {num_success / total_trials}" + "\033[0m")
-            result_store[pretrain_model_path] = {'success_rate': num_success / total_trials, 'num_success': num_success, 'total_trials': total_trials}
+            print("\033[91m" + f"success rate: {num_success / total_trials}; total avg dis2obj: {total_avg_dist2obj/total_trials}" + "\033[0m")
+
+        result_store[pretrain_model_path] = {
+                        'success_rate': num_success / total_trials, \
+                        'avg_dis2obj': total_avg_dist2obj/total_trials, \
+                        'num_success': num_success, 'total_trials': total_trials}
     print(result_store)
     with open(os.path.join(experiment_dir, 'eval_results.json'), 'w') as f:
         json.dump(result_store, f)
