@@ -100,8 +100,10 @@ def main(hydra_cfg):
     cfg_path = os.path.join(experiment_dir, "config.json")
     with open(cfg_path, "r") as f:
         cfg = EasyDict(yaml.safe_load(f))
+    cfg.folder = eval_cfg.dataset_dir
 
     dataset_path = os.path.join(cfg.folder, cfg.val_dataset_n)
+    print(dataset_path)
     skill_dataset, shape_meta = get_dataset(
         dataset_path=dataset_path,
         obs_modality=cfg.data.obs.modality,
@@ -117,10 +119,13 @@ def main(hydra_cfg):
         pretrain_model_paths = [pre_path for pre_path in pretrain_model_paths if ('model_best' not in pre_path)]
         pretrain_model_paths = sorted(pretrain_model_paths, key=lambda x: int(x[:-4].split('_')[-1]))
         pretrain_model_paths = pretrain_model_paths[-1:]
+    else:
+        raise NotImplementedError
     pretrain_model_paths = [to_absolute_path(os.path.join(experiment_dir, 'models', x)) for x in pretrain_model_paths]
     n_tasks = 1
     result_store = {}
     for pretrain_model_path in pretrain_model_paths:
+        print(pretrain_model_path)
         num_success = 0.0
         total_trials = 0.0
         total_avg_dist2obj = 0.0
