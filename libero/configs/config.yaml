@@ -11,10 +11,10 @@ defaults:
 
 seed: 10000
 use_wandb: false
-dataset_n: libero_gcs_train.hdf5
-val_dataset_n: libero_gcs_val.hdf5
+dataset_n: libero_gcs_human_train.hdf5
+val_dataset_n: libero_gcs_human_val.hdf5
 wandb_project: "lifelong learning"
-folder: /data/rutavms/data/libero_gcs/ # use default path
+folder: /data/rutavms/data/libero_gcs_human/ # use default path
 bddl_folder: null # use default path
 init_states_folder: null # use default path
 load_previous_model: false

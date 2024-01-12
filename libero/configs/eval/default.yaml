@@ -9,3 +9,4 @@ max_steps: 600
 use_mp: true
 num_procs: 20
 save_sim_states: false
+save_video: false

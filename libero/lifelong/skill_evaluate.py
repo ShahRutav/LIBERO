@@ -40,7 +40,7 @@ import robomimic.utils.tensor_utils as TensorUtils
 
 def save_video(video_list, file_name):
     width, height, _ = video_list[0].shape
-    video = cv2.VideoWriter(file_name, cv2.VideoWriter_fourcc(*'MJPG'), 10, (width,height))
+    video = cv2.VideoWriter(file_name, cv2.VideoWriter_fourcc(*'MJPG'), 30, (width,height))
     for image in video_list:
         image = image[::-1,:,:]
         image = image[:,:,::-1]
@@ -101,7 +101,7 @@ def main(hydra_cfg):
     with open(cfg_path, "r") as f:
         cfg = EasyDict(yaml.safe_load(f))
 
-    dataset_path = os.path.join(cfg.folder, cfg.dataset_n)
+    dataset_path = os.path.join(cfg.folder, cfg.val_dataset_n)
     skill_dataset, shape_meta = get_dataset(
         dataset_path=dataset_path,
         obs_modality=cfg.data.obs.modality,
@@ -131,7 +131,6 @@ def main(hydra_cfg):
         # prepare datasets from the benchmark
         manip_datasets = []
         descriptions = []
-        shape_meta = None
 
         print(dataset_path)
         dataset = h5py.File(dataset_path, 'r')['data']
@@ -149,15 +148,15 @@ def main(hydra_cfg):
                 "bddl_file_name": task_bddl_file,
                 "camera_heights": 128,
                 "camera_widths": 128,
-                "controller": "OSC_POSITION",
-                "control_delta": False,
             }
+            if shape_meta['ac_dim'] == 4:
+                env_args.update({"controller": "OSC_POSITION", "control_delta": False})
             env = OffScreenRenderEnv(**env_args)
 
             init_state = dataset[key]['meta_data/init_state'][()]
             env.set_init_state(init_state)
             for _ in range(5):
-                zero_action = np.zeros(4)
+                zero_action = np.zeros(shape_meta['ac_dim'])
                 env.step(zero_action)
 
             object_name = dataset[key]['meta_data/object_name'][()]
@@ -170,7 +169,7 @@ def main(hydra_cfg):
             is_success = False
             avg_dist2obj = 0.0
             video = []
-            for ind in range(120):
+            for ind in range(150):
                 data = raw_obs_to_tensor_obs(obs, cfg, goal_emb=goal_emb)
                 actions = algo.policy.get_action(data)[0]
                 obs, reward, done, info = env.step(actions)
@@ -184,7 +183,7 @@ def main(hydra_cfg):
                     break
             total_avg_dist2obj += avg_dist2obj
 
-            if False:
+            if eval_cfg.save_video:
                 file_name = f'vid_{int(total_trials):03d}_{object_name}.avi'
                 video_dir = os.path.join(experiment_dir, 'videos')
                 video_file = os.path.join(video_dir, file_name)
