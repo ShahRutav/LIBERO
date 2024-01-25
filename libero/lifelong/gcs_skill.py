@@ -43,7 +43,8 @@ def create_experiment_dir(cfg):
         # join all modalities
         modalities = "_".join([rgb_modalities, low_dim_modalities])
         modalities = modalities[1:]
-        cfg.experiment_dir = to_absolute_path(f"experiments/{modalities}_{cfg.data.seq_len}_s{cfg.seed}")
+        dataset_name = cfg.dataset_n[:-5]
+        cfg.experiment_dir = to_absolute_path(f"experiments/{dataset_name}_{modalities}_s{cfg.seed}")
     Path(cfg.experiment_dir).mkdir(parents=True, exist_ok=True)
     # check number of directories starting with run_ in the experiment dir
     run_dirs = [d for d in os.listdir(cfg.experiment_dir) if d.startswith("run_")]
