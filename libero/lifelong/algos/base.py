@@ -194,8 +194,7 @@ class Sequential(nn.Module, metaclass=AlgoMeta):
                 f"[info] Epoch: {epoch:3d} | train loss: {training_loss:5.2f} | time: {(t1-t0)/60:4.2f}"
             )
 
-            # save 10 checkpoints
-            if epoch % (self.cfg.train.n_epochs // 5) == 0:
+            if epoch % self.cfg.train.eval_every == 0:
                 val_loss = 0.0
                 self.policy.eval()
                 for (idx, data) in tqdm(enumerate(val_dataloader), total=len(val_dataloader)):

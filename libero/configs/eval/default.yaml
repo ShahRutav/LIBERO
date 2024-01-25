@@ -4,11 +4,10 @@ eval: true
 batch_size: 64
 num_workers: 4
 n_eval: 20
-eval_every: 5
-eval_type: best
+eval_every: 10
 max_steps: 600
 use_mp: true
 num_procs: 20
 save_sim_states: false
 save_video: false
-dataset_dir: /home/rutavms/research/preference/vq_vae/dataset/libero_gcs_human/
+dataset_dir: /data/rutavms/data/libero_gcs_human/

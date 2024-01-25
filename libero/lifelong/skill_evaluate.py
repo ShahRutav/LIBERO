@@ -115,6 +115,10 @@ def main(hydra_cfg):
     # sort the model paths
     if eval_cfg.eval_type == 'best':
         pretrain_model_paths = [pre_path for pre_path in pretrain_model_paths if ('model_best' in pre_path)]
+    elif eval_cfg.eval_type.startswith('epoch_'):
+        epoch_num = int(eval_cfg.eval_type.split('_')[-1])
+        # example: task0_model_010.pth
+        pretrain_model_paths = [f'task0_model_{epoch_num:03d}.pth']
     elif eval_cfg.eval_type == 'last':
         pretrain_model_paths = [pre_path for pre_path in pretrain_model_paths if ('model_best' not in pre_path)]
         pretrain_model_paths = sorted(pretrain_model_paths, key=lambda x: int(x[:-4].split('_')[-1]))
