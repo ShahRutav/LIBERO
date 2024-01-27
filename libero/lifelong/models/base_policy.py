@@ -1,6 +1,7 @@
 import robomimic.utils.tensor_utils as TensorUtils
 import torch
 import torch.nn as nn
+import numpy as np
 
 from libero.lifelong.models.modules.data_augmentation import (
     IdentityAug,
@@ -101,10 +102,14 @@ class BasePolicy(nn.Module, metaclass=PolicyMeta):
     def preprocess_input(self, data, train_mode=True):
         if train_mode:  # apply augmentation
             if self.cfg.train.use_augmentation:
-                img_tuple = self._get_img_tuple(data)
-                aug_out = self._get_aug_output_dict(self.img_aug(img_tuple))
-                for img_name in self.image_encoders.keys():
-                    data["obs"][img_name] = aug_out[img_name]
+                if len(self.cfg.data.obs.modality.rgb) > 0:
+                    img_tuple = self._get_img_tuple(data)
+                    aug_out = self._get_aug_output_dict(self.img_aug(img_tuple))
+                    for img_name in self.image_encoders.keys():
+                        data["obs"][img_name] = aug_out[img_name]
+                if len(self.cfg.data.obs.modality.low_dim) > 0:
+                    for modality in self.cfg.data.obs.modality.low_dim:
+                        data["obs"][modality] += torch.Tensor(np.random.normal(0, self.cfg.train.low_dim_aug_std, data["obs"][modality].shape)).to(self.device)
             return data
         else:
             data = TensorUtils.recursive_dict_list_tuple_apply(

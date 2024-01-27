@@ -12,6 +12,7 @@ resume_path: ""
 debug: false
 
 use_augmentation: true
+low_dim_aug_std: 1e-5
 
 defaults:
     - optimizer@optimizer: adam_w.yaml
