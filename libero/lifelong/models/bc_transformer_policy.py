@@ -40,7 +40,7 @@ class ExtraModalityTokens(nn.Module):
         joint_states_dim = 7
         gripper_states_dim = 2
         ee_dim = 3
-        goal_emb_dim = 768
+        goal_emb_dim = 768*2
 
         self.num_extra = int(use_joint) + int(use_gripper) + int(use_ee)
 
@@ -74,7 +74,7 @@ class ExtraModalityTokens(nn.Module):
             (joint_states_dim, self.use_joint, "robot0_joint_pos"),
             (gripper_states_dim, self.use_gripper, "robot0_gripper_qpos"),
             (ee_dim, self.use_ee, "ee_states"),
-            (goal_emb_dim, self.use_goal_emb, "goal_emb_dinov2-base"),
+            (goal_emb_dim, self.use_goal_emb, "skill_c_emb_dinov2-base"),
         ]:
 
             if use_modality:
@@ -99,7 +99,7 @@ class ExtraModalityTokens(nn.Module):
             (self.use_joint, "robot0_joint_pos"),
             (self.use_gripper, "robot0_gripper_qpos"),
             (self.use_ee, "ee_states"),
-            (self.use_goal_emb, "goal_emb_dinov2-base"),
+            (self.use_goal_emb, "skill_c_emb_dinov2-base"),
         ]:
 
             if use_modality:

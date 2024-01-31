@@ -7,6 +7,7 @@ import sys
 import json
 import pprint
 import time
+import random
 from pathlib import Path
 
 import hydra
@@ -38,6 +39,12 @@ from libero.lifelong.utils import (
 import robomimic.utils.obs_utils as ObsUtils
 import robomimic.utils.tensor_utils as TensorUtils
 
+def set_seed(seed):
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    np.random.seed(seed)
+
 def save_video(video_list, file_name):
     width, height, _ = video_list[0].shape
     video = cv2.VideoWriter(file_name, cv2.VideoWriter_fourcc(*'MJPG'), 30, (width,height))
@@ -54,6 +61,7 @@ def raw_obs_to_tensor_obs(obs, cfg, goal_emb):
     """
     env_num = len(obs)
     obs['goal_emb_dinov2-base'] = goal_emb
+    obs['skill_c_emb_dinov2-base'] = goal_emb
 
     data = {
         "obs": {},
@@ -102,6 +110,8 @@ def main(hydra_cfg):
         cfg = EasyDict(yaml.safe_load(f))
     cfg.folder = eval_cfg.dataset_dir
 
+    if eval_cfg.dataset_name is not None:
+        cfg.val_dataset_n = eval_cfg.dataset_name
     dataset_path = os.path.join(cfg.folder, cfg.val_dataset_n)
     print(dataset_path)
     skill_dataset, shape_meta = get_dataset(
@@ -143,7 +153,9 @@ def main(hydra_cfg):
 
         print(dataset_path)
         dataset = h5py.File(dataset_path, 'r')['data']
-        for key in dataset.keys():
+        traj_keys = list(dataset.keys())
+        random.shuffle(traj_keys)
+        for key in traj_keys:
             bm = dataset[key]['meta_data/benchmark_name'][()]
             bm = bm.decode('utf-8')
             bm = str(bm)
@@ -171,7 +183,7 @@ def main(hydra_cfg):
             object_name = dataset[key]['meta_data/object_name'][()]
             object_name = object_name.decode('utf-8')
             object_name = str(object_name)
-            goal_emb = dataset[key]['obs/goal_emb_dinov2-base'][()][0]
+            goal_emb = dataset[key]['obs/skill_c_emb_dinov2-base'][()][0]
 
             obs = env.env._get_observations()
             lift_height = obs[f'{object_name}_pos'][2] + 0.15
@@ -221,4 +233,5 @@ def main(hydra_cfg):
         json.dump(result_store, f)
 
 if __name__ == '__main__':
+    set_seed(0)
     main()

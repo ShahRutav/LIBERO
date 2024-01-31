@@ -39,6 +39,7 @@ obs_key_mapping:
   goal_emb_dinov2-base: goal_emb_dinov2-base
   agentview_image: agentview_image
   robot0_eye_in_hand_image: robot0_eye_in_hand_image
+  skill_c_emb_dinov2-base: skill_c_emb_dinov2-base
 
 # action related
 affine_translate: 4
