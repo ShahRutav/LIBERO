@@ -1,10 +1,8 @@
 import collections
 import copy
 import numpy as np
-from .skills import (
-    ReachSkill,
-    PickSkill,
-)
+from .pick import PickSkill
+from .reach import ReachSkill
 
 class SkillController:
     SKILL_NAMES = [
@@ -108,7 +106,7 @@ class SkillController:
     def get_skill_names(self):
         return list(self._skills.keys())
 
-    def reset(self, action):
+    def reset(self, action, *args, **kwargs):
         skill_name = self.get_skill_name_from_action(action)
         params = self.get_params_from_action(action)
         self._cur_skill = self._skills[skill_name]
@@ -120,7 +118,7 @@ class SkillController:
             robot_controller=robot.controller,
         )
         info = self._get_info()
-        self._cur_skill.reset(params, skill_config_update, info)
+        self._cur_skill.reset(params, skill_config_update, info, *args, **kwargs)
         self._num_ac_calls = 0
         self._max_ac_calls = self._cur_skill.get_max_ac_calls()
         self._pos_is_delta = None

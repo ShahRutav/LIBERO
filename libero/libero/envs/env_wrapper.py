@@ -307,12 +307,16 @@ class SkillControllerEnv(ControlEnv):
             param_dim = self._skill_controller.get_param_dim(robot.action_dim)
             self._action_dim += (param_dim + skill_dim)
 
-    def step(self, action):
+    def step(self, action, *args, **kwargs):
         # action: first skill_dim indicates the skill to be executed, one hot encoded
         # the rest of the action is the parameter of the skill
         # reset the skill to current_skill
         # reset all info variable for the skill including parameter of the skill
-        self._skill_controller.reset(action)
+        print("*"*50)
+        print("Skill Controller Env Step")
+        print(action)
+        print("*"*50)
+        self._skill_controller.reset(action, *args, **kwargs)
         reward_sum = 0.0
         obs = self._get_observations()
         info = []
@@ -324,7 +328,7 @@ class SkillControllerEnv(ControlEnv):
         while True:
             action_ll = self._skill_controller.step()
             next_obs, reward, done, info = super().step(action_ll)
-            #self.env.render()
+            self.env.render()
             reward_sum += reward
             # update the info with the observation
             if self._return_all_info:
