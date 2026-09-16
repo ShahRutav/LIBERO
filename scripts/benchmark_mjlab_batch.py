@@ -219,9 +219,20 @@ def main():
               "identical_demo_in_independent_worlds": True, "cameras": False,
               "cpu_threads": 1, "actions_per_episode": len(actions), "rows": []}
     try:
+        env.reset()
         env.reset_from_xml_string(xml)
         env.sim.reset()
         env.set_init_state(initial)
+        # Match replay_mjlab's reset protocol before collecting the reference.
+        env.env.deterministic_reset = True
+        try:
+            env.reset()
+        finally:
+            env.env.deterministic_reset = False
+        env.sim.reset()
+        env.set_init_state(initial)
+        env.robots[0].controller.update(force=True)
+        env.robots[0].controller.reset_goal()
         substeps = int(env.env.control_timestep / env.env.model_timestep)
         report["physics_steps_per_action"] = substeps
         # Produce a physically meaningful torque workload outside all timings.
@@ -230,6 +241,8 @@ def main():
         reference_outcomes, reference_states = reference.outcomes()
         report["reference"] = reference_outcomes
         reference.close()
+        if not reference_outcomes["success_count"]:
+            raise RuntimeError("Native reference must complete the expert task before benchmarking")
         # Verify that removing observation bookkeeping did not change the
         # native physics/controller trajectory used as the timing baseline.
         for action in actions:
@@ -246,6 +259,8 @@ def main():
             env.env.deterministic_reset = False
         env.sim.reset()
         env.set_init_state(initial)
+        env.robots[0].controller.update(force=True)
+        env.robots[0].controller.reset_goal()
         for count in args.sizes:
             for backend in args.backends:
                 batch = Batch(env, count, backend, initial, args.device)
