@@ -1,0 +1,13 @@
+# Runtime for the mjlab backend. Install instead of the legacy training pins.
+mjlab==1.6.0
+mujoco==3.11.0
+mujoco-warp==3.11.0
+robosuite==1.4.0
+bddl==1.0.1
+gym==0.25.2
+easydict>=1.9
+h5py>=3.10
+pyyaml>=6
+matplotlib>=3.8
+opencv-python>=4.8
+numpy>=1.26,<3

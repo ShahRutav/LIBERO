@@ -1,4 +1,5 @@
 import os
+import sys
 import yaml
 
 # This is a default path for localizing all the benchmark related files
@@ -66,9 +67,9 @@ if not os.path.exists(config_file):
     # Create a default config file
 
     default_path_dict = get_default_path_dict()
-    answer = input(
+    answer = (input(
         "Do you want to specify a custom path for the dataset folder? (Y/N): "
-    ).lower()
+    ).lower() if sys.stdin.isatty() else "n")
     if answer == "y":
         # If the user wants to specify a custom storage path, prompt them to enter it
         custom_dataset_path = input(

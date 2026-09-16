@@ -38,13 +38,17 @@ class ControlEnv:
         camera_segmentations=None,
         renderer="mujoco",
         renderer_config=None,
+        backend="mujoco",
+        mjlab_device="cuda:0",
         **kwargs,
     ):
         assert os.path.exists(
             bddl_file_name
         ), f"[error] {bddl_file_name} does not exist!"
 
-        controller_configs = suite.load_controller_config(default_controller=controller)
+        controller_configs = kwargs.pop("controller_configs", None)
+        if controller_configs is None:
+            controller_configs = suite.load_controller_config(default_controller=controller)
 
         problem_info = BDDLUtils.get_problem_info(bddl_file_name)
         # Check if we're using a multi-armed environment and use env_configuration argument if so
@@ -77,6 +81,8 @@ class ControlEnv:
             camera_segmentations=camera_segmentations,
             renderer=renderer,
             renderer_config=renderer_config,
+            backend=backend,
+            mjlab_device=mjlab_device,
             **kwargs,
         )
 
@@ -88,17 +94,12 @@ class ControlEnv:
         return self.env.step(action)
 
     def reset(self):
-        success = False
-        while not success:
+        for attempt in range(100):
             try:
-                ret = self.env.reset()
-                success = True
-            except RandomizationError:
-                pass
-            finally:
-                continue
-
-        return ret
+                return self.env.reset()
+            except RandomizationError as exc:
+                if attempt == 99:
+                    raise RuntimeError("LIBERO placement failed after 100 reset attempts") from exc
 
     def check_success(self):
         return self.env._check_success()

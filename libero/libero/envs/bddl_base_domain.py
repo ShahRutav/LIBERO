@@ -75,8 +75,16 @@ class BDDLBaseDomain(SingleArmEnv):
         arena_type="table",
         scene_xml="scenes/libero_base_style.xml",
         scene_properties={},
+        backend="mujoco",
+        mjlab_device="cuda:0",
         **kwargs,
     ):
+        if backend not in {"mujoco", "mjlab"}:
+            raise ValueError(f"Unknown simulation backend: {backend}")
+        from libero.libero.envs.robosuite_compat import install_controller_compat
+        install_controller_compat()
+        self.backend = backend
+        self.mjlab_device = mjlab_device
         t0 = time.time()
         # settings for table top (hardcoded since it's not an essential part of the environment)
         self.workspace_offset = workspace_offset
@@ -728,11 +736,31 @@ class BDDLBaseDomain(SingleArmEnv):
                 sampler, {"reference": target_name, "site_name": region_name}
             )
 
+    def _initialize_sim(self, xml_string=None):
+        from libero.libero.envs.model_compat import preserve_libero_defaults
+        xml = xml_string if xml_string else self.model.get_xml()
+        xml = preserve_libero_defaults(xml)
+        if self.backend == "mujoco":
+            return super()._initialize_sim(xml)
+        from libero.libero.envs.mjlab_sim import MjlabSim
+
+        if self._xml_processor is not None:
+            xml = self._xml_processor(xml)
+        self.sim = MjlabSim.from_xml_string(xml, device=self.mjlab_device)
+        self.sim.forward()
+        self.initialize_time(self.control_freq)
+
     def _reset_internal(self):
         """
         Resets simulation internal configurations.
         """
         super()._reset_internal()
+        # robosuite 1.4's incremental gripper command survives a soft reset.
+        # Reset it along with the newly constructed arm controller.
+        for robot in self.robots:
+            if robot.has_gripper:
+                robot.gripper.current_action = np.zeros_like(robot.gripper.current_action)
+
 
         # Reset all object positions using initializer sampler if we're not directly loading from an xml
         if not self.deterministic_reset:
