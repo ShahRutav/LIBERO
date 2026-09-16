@@ -20,7 +20,6 @@ import torch
 import warp as wp
 
 from mjlab.sim import Simulation, SimulationCfg
-from robosuite.controllers import controller_factory
 from robosuite.utils.binding_utils import MjSim
 
 from libero.libero import get_libero_path
@@ -65,10 +64,11 @@ class Batch:
             for name, value in vars(template).items():
                 if name.startswith("recent_"):
                     setattr(robot, name, copy.deepcopy(value))
-            cfg = dict(template.controller_config, sim=sim)
-            robot.controller = controller_factory(cfg["type"], cfg)
-            # Preserve the original reset posture used for OSC nullspace torque.
-            robot.controller.initial_joint = template.controller.initial_joint.copy()
+            # Clone the controller's complete reset state, including cached
+            # end-effector pose and update flag, before swapping its simulator.
+            # Reconstructing it at the injected demo state changes action 0.
+            robot.controller = copy.deepcopy(
+                template.controller, {id(template.controller.sim): sim})
             self.robots.append(robot)
         if self.engine is not None:
             with torch.cuda.stream(self.stream):
@@ -238,7 +238,14 @@ def main():
         report["native_loop_vs_original_env_max_abs"] = float(np.max(
             np.abs(original_state - reference_states[0])))
         if report["native_loop_vs_original_env_max_abs"] > 1e-7:
-            raise RuntimeError("Benchmark controller loop does not match original LIBERO")
+            raise RuntimeError(f"Benchmark loop differs from LIBERO by {report['native_loop_vs_original_env_max_abs']}")
+        env.env.deterministic_reset = True
+        try:
+            env.reset()
+        finally:
+            env.env.deterministic_reset = False
+        env.sim.reset()
+        env.set_init_state(initial)
         for count in args.sizes:
             for backend in args.backends:
                 batch = Batch(env, count, backend, initial, args.device)
