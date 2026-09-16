@@ -96,6 +96,25 @@ class MjlabIntegrationTest(unittest.TestCase):
         self.env.reset()
         np.testing.assert_array_equal(self.env.robots[0].gripper.current_action, 0)
 
+    def test_transfer_and_step_share_warp_stream(self):
+        import warp as wp
+        self.env.reset()
+        self.env.step(np.zeros(7))
+        engine = self.env.sim.engine
+        original_step = engine.step
+
+        def checked_step():
+            self.assertEqual(
+                torch.cuda.current_stream(self.env.sim.device).cuda_stream,
+                wp.get_stream(engine.wp_device).cuda_stream,
+            )
+            original_step()
+
+        caller_stream = torch.cuda.Stream(device=self.env.sim.device)
+        with torch.cuda.stream(caller_stream), patch.object(engine, "step", side_effect=checked_step) as step:
+            self.env.step(np.zeros(7))
+        self.assertEqual(step.call_count, 25)
+
     def test_hard_reset_keeps_backend_and_controller_references(self):
         from libero.libero.envs.mjlab_sim import MjlabSim
         self.env.env.hard_reset = True

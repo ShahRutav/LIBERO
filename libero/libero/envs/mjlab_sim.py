@@ -5,6 +5,8 @@ mjlab advances simulation time. This bridge prioritizes compatibility over
 throughput; it is not a vectorized manager-based training environment.
 """
 
+from contextlib import nullcontext
+
 import mujoco
 import numpy as np
 from robosuite.utils.binding_utils import MjSim
@@ -49,16 +51,32 @@ class MjlabSim(MjSim):
             self._model_pose = pose
 
     def step(self, with_udd=True):
+        self._ensure_engine()
+        # Tensor slices leave TorchArray's stream wrapper. Keep the entire
+        # transfer/step/readback sequence on Warp's stream, including copy_.
+        # Otherwise stepping can race the host-to-device state uploads.
+        with self._stream_scope():
+            self._step_on_stream()
+
+    def _stream_scope(self):
+        import torch
+        import warp as wp
+        if not self.engine.wp_device.is_cuda:
+            return nullcontext()
+        return torch.cuda.stream(torch.cuda.ExternalStream(
+            wp.get_stream(self.engine.wp_device).cuda_stream, device=self.device
+        ))
+
+    def _step_on_stream(self):
         import torch
 
-        self._ensure_engine()
         host = self.data._data
         # Host arrays are writable through robosuite. Upload every integration
         # input, including external forces and warm starts, before stepping.
         for name in (
             "qpos", "qvel", "act", "ctrl", "qacc_warmstart",
             "qfrc_applied", "xfrc_applied", "mocap_pos", "mocap_quat",
-            "eq_active",
+            "eq_active", "history", "userdata",
         ):
             value = getattr(host, name)
             if value.size:
@@ -78,8 +96,11 @@ class MjlabSim(MjSim):
 
     def reset(self):
         super().reset()
-        # All integration inputs are uploaded on the next step. The GPU model
-        # is rebuilt only if the subsequent fixture sampling changes its poses.
+        if self.engine is not None:
+            # Clear GPU solver, collision, and sleeping state as well as the
+            # legacy integration arrays. A host-only reset is incomplete.
+            with self._stream_scope():
+                self.engine.reset()
 
     def free(self):
         self.engine = None
