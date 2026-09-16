@@ -137,3 +137,53 @@ updates, hard-reset references, gripper reset, and bounded error handling.
 See [the dated validation result](../results/2026-09-16-mjlab-replay.md). Validation
 currently covers one task and one expert demo. The backend hook is shared by
 all BDDL domain classes, but the remaining task suites are not yet certified.
+
+## Measure a 50-world batch
+
+Run this on the GPU pod from the fork's root:
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+LIBERO_SOURCE_REVISION="$(git rev-parse HEAD)" \
+python -m scripts.benchmark_mjlab_batch \
+    --dataset datasets/libero_spatial/pick_up_the_black_bowl_from_table_center_and_place_it_on_the_plate_demo.hdf5 \
+    --sizes 1 50 --repeats 3 --output outputs/batch50
+```
+
+This benchmark creates one shared-model mjlab Simulation with independent data
+for every world. Each world has its own original robosuite OSC controller. It
+uploads controls and downloads state in bulk. All worlds start from the same
+recorded initial state and receive the same expert actions; feedback control
+and integration remain independent. Controller pose and goals are refreshed
+from the injected initial state before either backend starts.
+
+Two timing scopes are reported:
+
+- `cpu_osc_and_physics`: original CPU controllers, native forward calculations,
+  physics, and the bulk transfers required by the GPU bridge.
+- `physics_only_torque_replay`: precomputed native torques, resident on GPU,
+  with no controller or per-step host readback. This isolates physics throughput;
+  open-loop torque replay does not guarantee task success on another solver.
+
+Neither scope includes cameras, the observation manager, policy inference,
+initialization, reset, or final success checks. Each configuration runs a full
+warmup episode, then three timed episodes. GPU synchronization brackets timing.
+The native CPU baseline processes its worlds serially with one BLAS thread.
+This comparison is not a benchmark against a parallel multicore CPU runner.
+
+The benchmark first requires native expert success and agreement between its
+controller loop and ordinary LIBERO stepping from the same controller state.
+It records final success counts for each measured configuration, even when
+numerical differences change task outcomes. Non-finite state invalidates a run.
+
+`batch_seconds_median` is the actual wall-clock latency of all episodes.
+`amortized_episode_seconds` divides that value by the number of worlds. The
+latter measures throughput cost, not how quickly one world finishes while
+running in the batch. `amortized_control_step_ms` divides again by 103 actions.
+
+This is an isolated benchmarking bridge. The regular `OffScreenRenderEnv`
+interface still owns one world, and this script does not add batched rendering
+or a production vector-environment API.
+
+See the [1-versus-50-world measurements](../results/2026-09-16-mjlab-batch50.md)
+for throughput, latency, and per-repeat success counts.
