@@ -1,3 +1,8 @@
+## mjlab backend
+
+This branch adds an optional GPU physics backend with the existing LIBERO API.
+Use `OffScreenRenderEnv(..., backend="mjlab")`. See the [setup and replay guide](docs/runbooks/mjlab-backend.md) for installation, validated scope, and limitations.
+
 <div align="center">
 <img src="https://github.com/Lifelong-Robot-Learning/LIBERO/blob/master/images/libero_logo.png" width="360">
 
