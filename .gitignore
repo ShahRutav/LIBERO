@@ -16,3 +16,7 @@ logs/
 *.mp4
 libero.egg-info/
 .vscode/
+
+# Human-readable validation records are source documentation.
+!docs/results/
+!docs/results/*.md
