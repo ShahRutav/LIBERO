@@ -80,7 +80,8 @@ class LiberoBatchEnv:
                    ("controller_goal_position", [3]), ("controller_goal_rotation6d", [6]),
                    ("controller_grip", [2]), ("previous_action", [self.action_dim])]
         self.observation_spec = {"version": 1, "name": "privileged_state_v1", "frame": "world",
-                                 "units": "SI", "model": self.model_spec,
+                                 "units": "SI", "rotation6d": "first_two_matrix_columns_row_major",
+                                 "qpos_quaternion_order": "wxyz", "model": self.model_spec,
                                  "fields": [{"name": n, "shape": shape} for n, shape in fields]}
         self.observation_schema_hash = schema_hash(self.observation_spec)
         self.num_obs = sum(int(np.prod(shape)) for _, shape in fields)
