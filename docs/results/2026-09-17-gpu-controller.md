@@ -41,6 +41,45 @@ counts are the acceptance evidence; this is not a blanket trajectory-closeness
 guarantee. The 50-world maxima are 4.66 mm for the EEF and 7.53 mm for objects.
 These distances compare final positions, not full trajectories.
 
+## CPU and GPU throughput
+
+These rates include feedback control and physics, with cameras, observation
+construction, policy inference, reset, and setup excluded. Throughput is summed
+across worlds: `worlds * 103 / median_batch_seconds` control steps/s. Each
+control step contains 25 physics steps. Rates count all steps, including those
+in unsuccessful replays; success counts are reported separately above.
+
+| Physics / controller | Worlds | Aggregate control steps/s | Aggregate physics steps/s |
+|---|---:|---:|---:|
+| Native CPU / CPU | 1 | 57.19 | 1,430 |
+| Native CPU / CPU, serial | 50 | 52.19 | 1,305 |
+| GPU / CPU | 1 | 28.09 | 702 |
+| GPU / CPU | 50 | 66.14 | 1,653 |
+| GPU / CPU | 100 | 67.15 | 1,679 |
+| GPU / GPU | 1 | 12.03 | 301 |
+| GPU / GPU | 50 | 490.68 | 12,267 |
+| GPU / GPU | 100 | 925.38 | 23,134 |
+| GPU / GPU | 256 | 1,874.95 | 46,874 |
+| GPU / GPU | 512 | 2,699.02 | 67,475 |
+| GPU / GPU | 1,024 | 3,458.03 | 86,451 |
+| GPU / GPU | 2,048 | 4,041.29 | 101,032 |
+| GPU / GPU | 2,560 | 4,109.98 | 102,749 |
+
+The native CPU baseline is a serial runner with one Torch/BLAS/OpenMP thread,
+not a multicore subprocess benchmark. Native CPU throughput has not been
+measured at 1,024–2,560 worlds; no CPU timings are extrapolated to those sizes.
+At the matched 50-world count, GPU physics plus GPU control delivers 9.40×
+the native serial CPU throughput and 7.42× the GPU-physics/CPU-controller
+throughput. The higher-count GPU results use greater batching and should not
+be described as matched-count CPU speedups.
+
+CPU and hybrid rates are calculated from the accepted
+[1/50-world reports](2026-09-16-mjlab-batch50.md) and the
+[100-world hybrid report](2026-09-17-mjlab-capacity.md). All rates use three-run
+median timings except the 100-world hybrid baseline, which has one timed run.
+This table adds derived rates from existing measurements; it introduces no
+new simulation runs.
+
 ## Capacity decision
 
 Use **2048 worlds per L40S** as a practical starting point for this headless
