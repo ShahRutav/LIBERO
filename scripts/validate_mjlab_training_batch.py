@@ -50,9 +50,12 @@ def predicate_parity(batch):
     old = native.sim
     states = batch.export_state()
     expected = []
+    saved_pos, saved_quat = batch.model.body_pos.copy(), batch.model.body_quat.copy()
     try:
         native.sim = sim
         for i in range(batch.num_envs):
+            batch.model.body_pos[:] = states["model_body_pos"][i].cpu().numpy()
+            batch.model.body_quat[:] = states["model_body_quat"][i].cpu().numpy()
             sim.data.qpos[:] = states["qpos"][i].cpu().numpy()
             sim.data.qvel[:] = states["qvel"][i].cpu().numpy()
             if batch.model.na:
@@ -61,6 +64,8 @@ def predicate_parity(batch):
             expected.append(bool(batch.env.check_success()))
     finally:
         native.sim = old
+        batch.model.body_pos[:] = saved_pos
+        batch.model.body_quat[:] = saved_quat
     with batch._scope():
         actual = batch._success().cpu().tolist()
     if expected != actual:
@@ -74,8 +79,16 @@ def run(args):
     # Midtrajectory states here intentionally stress indexing; their controller
     # resets define new episodes and do not claim expert-prefix restoration.
     bank = states[np.linspace(0, len(states)-1, 4, dtype=int)]
-    batch = LiberoBatchEnv(env, bank, 4, device=args.device)
-    one = LiberoBatchEnv(env, bank, 1, device=args.device)
+    model = env.sim.model._model
+    body_pos = np.repeat(model.body_pos[None], len(bank), axis=0)
+    body_quat = np.repeat(model.body_quat[None], len(bank), axis=0)
+    fixtures = [name for name in env.env.fixtures_dict if name in env.env.obj_body_id]
+    if fixtures:
+        body = env.env.obj_body_id[fixtures[0]]
+        body_pos[:, body, 0] += np.arange(len(bank))*.001
+    pose_kwargs = dict(initial_body_pos=body_pos, initial_body_quat=body_quat)
+    batch = LiberoBatchEnv(env, bank, 4, device=args.device, **pose_kwargs)
+    one = LiberoBatchEnv(env, bank, 1, device=args.device, **pose_kwargs)
     report = {}
     try:
         ids = torch.arange(4, device=args.device)
