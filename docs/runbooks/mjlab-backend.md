@@ -187,3 +187,18 @@ or a production vector-environment API.
 
 See the [1-versus-50-world measurements](../results/2026-09-16-mjlab-batch50.md)
 for throughput, latency, and per-repeat success counts.
+
+For larger physics-only sweeps, add `--backends mjlab
+--scopes physics_only_torque_replay` and increase `--sizes` gradually. Use
+`--scopes cpu_osc_and_physics` to measure the retained CPU controller separately.
+The default still measures both scopes. Reports include device-wide used VRAM
+after trials and the process's peak host RSS. VRAM is a snapshot, not a peak;
+it includes other processes if the device is shared. Use an otherwise idle GPU.
+
+Reserve at least 30% of VRAM and apply a 20% margin to projected memory before
+trying another batch size. Stop if throughput plateaus or the next size exceeds
+that budget. Confirm a candidate size in a fresh process because allocator
+caches can retain memory across configurations. These checks establish a tested
+operating range, not the allocation-failure limit or a camera-enabled limit.
+See the [capacity sweep and operating budget](../results/2026-09-17-mjlab-capacity.md)
+for measured counts on the bowl-to-plate task.
