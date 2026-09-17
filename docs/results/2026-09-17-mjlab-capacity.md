@@ -13,7 +13,7 @@ but adds only 1.35% throughput for 24.2% more used VRAM. Stop the sweep there.
 This is a measured operating range, not an absolute hardware maximum.
 
 With the original CPU controllers, 100 worlds barely improve throughput over
-50. The [separate GPU controller branch](https://github.com/ShahRutav/LIBERO/tree/codex/libero-gpu-controller)
+50. The [GPU controller on libero-mjlab](https://github.com/ShahRutav/LIBERO/tree/libero-mjlab)
 measures feedback-control scaling. Its timings must not be replaced by these
 physics-only values.
 

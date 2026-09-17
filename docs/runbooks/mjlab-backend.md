@@ -205,7 +205,7 @@ for measured counts on the bowl-to-plate task.
 
 ## Benchmark the GPU controller branch
 
-The `codex/libero-gpu-controller` branch provides a batched GPU implementation
+The `libero-mjlab` branch includes a batched GPU implementation
 of the demo's fixed delta `OSC_POSE` controller and Panda gripper. It keeps
 controller goals, Jacobians, inertia, feedback, and torque calculations on the
 GPU between steps. It retains robosuite's action scaling, torque limits,

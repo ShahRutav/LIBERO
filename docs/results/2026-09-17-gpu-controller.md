@@ -132,7 +132,7 @@ controller modes fail explicitly.
 
 ## Provenance
 
-- Branch: `codex/libero-gpu-controller`.
+- Development branch: `codex/libero-gpu-controller`; consolidated into `libero-mjlab` after validation.
 - Tested controller source: `b05ed72fd6b83aaa6aa46daa6c5c42ec198f68d5`.
 - Runner source for 2048/2560: `a3853c95c2fcf7a24fb7b24aaa962e9caf0129b4`,
   adding stricter parity gates without changing controller math.
