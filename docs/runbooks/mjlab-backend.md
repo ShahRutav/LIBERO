@@ -187,3 +187,49 @@ or a production vector-environment API.
 
 See the [1-versus-50-world measurements](../results/2026-09-16-mjlab-batch50.md)
 for throughput, latency, and per-repeat success counts.
+
+## Benchmark the GPU controller branch
+
+The `codex/libero-gpu-controller` branch provides a batched GPU implementation
+of the demo's fixed delta `OSC_POSE` controller and Panda gripper. It keeps
+controller goals, Jacobians, inertia, feedback, and torque calculations on the
+GPU between steps. It retains robosuite's action scaling, torque limits,
+position limits, orientation-goal convention, nullspace target, pseudoinverse
+cutoff, and gripper accumulation at every physics substep.
+
+Run on a free GPU in the prepared pod container, from this repository:
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+PYTHONPATH="$PWD" LIBERO_SOURCE_REVISION="$(git rev-parse HEAD)" \
+python -m scripts.benchmark_gpu_osc \
+  --dataset /work/datasets/libero_spatial/pick_up_the_black_bowl_from_table_center_and_place_it_on_the_plate_demo.hdf5 \
+  --output /work/gpu-osc-benchmark --sizes 1 50 100 256 --repeats 3
+```
+
+The output directory must be new. The runner first checks native replay success
+and exact agreement with ordinary LIBERO stepping. It then compares GPU
+controller math against robosuite at 103 matched native trajectory states.
+GPU-derived Jacobians and inertia are checked separately against native data.
+Each requested batch receives a full warmup followed by synchronized timing
+replicates and original LIBERO success checks. `report.json` records source
+hashes, memory use, final EEF/object distances, and all trial outcomes.
+
+The controller math uses float64, matching robosuite. MuJoCo-Warp physics remains
+float32. Axis-angle rotation uses the equivalent Rodrigues formula, with small
+rounding differences from robosuite's float32 quaternion-to-matrix conversion.
+Torch's matrix factorizations still synchronize with the host; no simulation
+state is downloaded during control. This first port does not promise a fully
+asynchronous CUDA graph.
+
+Only fixed delta `OSC_POSE` with no interpolation or orientation limits and a
+Panda gripper is supported. Other configurations raise `NotImplementedError`.
+The benchmark supports independent per-world controller state but replays one
+shared task, initial state, and action sequence for comparison. Cameras,
+observations, policy inference, reset/setup, and final predicate evaluation
+remain outside the timer. `OffScreenRenderEnv` remains the existing single-world
+compatibility interface; this branch's batched controller is exercised through
+`benchmark_gpu_osc`, not through a new camera/vector environment API.
+
+See the [measured GPU controller results](../results/2026-09-17-gpu-controller.md)
+for success, throughput, memory headroom, and the tested batch range.
