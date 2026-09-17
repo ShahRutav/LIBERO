@@ -65,6 +65,15 @@ class GPUOSC:
         self.goal_ori = self.tensor(controller.goal_ori).expand(n,-1,-1).clone()
         self.grip = torch.zeros((n,2), device=self.device, dtype=self.dtype)
 
+    def reset_indices(self, env_ids, goal_pos=None, goal_ori=None, grip=None):
+        """Reset selected worlds after forward, preserving all other controllers."""
+        d = self.engine.data
+        self.goal_pos[env_ids] = (d.site_xpos[env_ids, self.site].to(self.dtype)
+                                 if goal_pos is None else goal_pos)
+        self.goal_ori[env_ids] = (d.site_xmat[env_ids, self.site].reshape(-1, 3, 3).to(self.dtype)
+                                 if goal_ori is None else goal_ori)
+        self.grip[env_ids] = 0 if grip is None else grip
+
     def state(self):
         d = self.engine.data
         pos = d.site_xpos[:,self.site].to(self.dtype)
