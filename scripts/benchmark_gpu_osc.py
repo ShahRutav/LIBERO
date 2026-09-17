@@ -15,12 +15,8 @@ import numpy as np
 import torch
 import warp as wp
 
-from mjlab.sim import Simulation, SimulationCfg
-from robosuite.utils.binding_utils import MjSim
-
 from libero.libero import get_libero_path
 from libero.libero.envs.env_wrapper import ControlEnv
-from libero.libero.envs.mjlab_sim import _PreserveOptions
 from scripts.replay_mjlab import localize_xml
 
 
@@ -99,7 +95,7 @@ def validate_controller(env, initial, actions, substeps, device):
             robot.sim.step()
             for _ in range(substeps-1):
                 native.step_controlled(action,False)
-        if any(errors[k] > limit for k, limit in {"torque":1e-4,"gpu_mass":1e-4,"gpu_jacobian":1e-4,"goal_position":1e-8,"goal_orientation":1e-6,"gripper":1e-7}.items()):
+        if any(errors[k] > limit for k, limit in {"torque":1e-4,"gpu_mass":1e-4,"gpu_jacobian":1e-4,"goal_position":1e-8,"goal_orientation":1e-6,"gripper":1e-7,"gpu_position":1e-5,"gpu_orientation":1e-5,"gpu_bias":1e-3}.items()):
             raise RuntimeError(f"Controller parity failed: {errors}")
         print("controller_parity",errors,flush=True)
         return {"states":len(actions),"max_absolute_errors":errors}
@@ -144,8 +140,6 @@ def main():
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--demo", default="demo_0")
-    parser.add_argument("--backends", nargs="+", choices=["mujoco", "mjlab"],
-                        default=["mjlab"])
     args = parser.parse_args()
     if args.repeats < 1 or min(args.sizes) < 1:
         parser.error("sizes and repeats must be positive")
@@ -222,7 +216,7 @@ def main():
         env.robots[0].controller.reset_goal()
         report["controller_parity"] = validate_controller(env, initial, actions, substeps, args.device)
         for count in args.sizes:
-            for backend in args.backends:
+            for backend in ("mjlab",):
                 batch = Batch(env, count, backend, initial, args.device)
                 try:
                     for scope in ("gpu_osc_and_physics",):
