@@ -69,10 +69,10 @@ class GPUOSC:
         """Reset selected worlds after forward, preserving all other controllers."""
         d = self.engine.data
         self.goal_pos[env_ids] = (d.site_xpos[env_ids, self.site].to(self.dtype)
-                                 if goal_pos is None else goal_pos)
+                                 if goal_pos is None else torch.as_tensor(goal_pos, device=self.goal_pos.device, dtype=self.dtype))
         self.goal_ori[env_ids] = (d.site_xmat[env_ids, self.site].reshape(-1, 3, 3).to(self.dtype)
-                                 if goal_ori is None else goal_ori)
-        self.grip[env_ids] = 0 if grip is None else grip
+                                 if goal_ori is None else torch.as_tensor(goal_ori, device=self.goal_ori.device, dtype=self.dtype))
+        self.grip[env_ids] = 0 if grip is None else torch.as_tensor(grip, device=self.grip.device, dtype=self.dtype)
 
     def state(self):
         d = self.engine.data
