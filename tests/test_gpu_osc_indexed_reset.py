@@ -41,6 +41,44 @@ class IndexedResetTest(unittest.TestCase):
         torch.testing.assert_close(c.goal_ori[2], r[0].double())
         torch.testing.assert_close(c.grip[2], g[0].double())
 
+    def test_inference_prefix_keeps_normal_persistent_buffers(self):
+        c = self.controller()
+        c.device = torch.device("cpu")
+        c.input_min = c.output_min = torch.full((6,), -1., dtype=c.dtype)
+        c.input_max = c.output_max = torch.ones(6, dtype=c.dtype)
+        c.position_limits = torch.tensor([[-100.]*3, [100.]*3], dtype=c.dtype)
+        c.grip_delta = torch.tensor([-.01, .01], dtype=c.dtype)
+        c.grip_bias = torch.zeros(2, dtype=c.dtype)
+        c.grip_weight = torch.ones(2, dtype=c.dtype)
+        c.gids = torch.tensor([0, 1])
+        c.engine.data.ctrl = torch.zeros(4, 2)
+        c.reset_indices(torch.arange(4))
+        buffers = {name: getattr(c, name) for name in ("goal_pos", "goal_ori", "grip")}
+        with torch.inference_mode():
+            c.advance_memory(torch.ones(4, 7, dtype=c.dtype)*.1, 3)
+        for name, buffer in buffers.items():
+            self.assertIs(getattr(c, name), buffer)
+            self.assertFalse(torch.is_inference(buffer))
+        # This is the BC-evaluation -> PPO reset transition that previously
+        # crashed when set_goal replaced buffers with inference tensors.
+        c.reset_indices(torch.tensor([1, 3]))
+        c.advance_memory(torch.ones(4, 7, dtype=c.dtype, requires_grad=True)*.1, 2)
+        for buffer in buffers.values():
+            self.assertFalse(buffer.requires_grad)
+        c.reset_indices(torch.tensor([1, 3]))
+        torch.testing.assert_close(c.grip[[1, 3]], torch.zeros(2, 2, dtype=c.dtype))
+
+    def test_full_reset_inside_inference_creates_normal_buffers(self):
+        c = GPUOSC.__new__(GPUOSC)
+        c.device, c.dtype = torch.device("cpu"), torch.float64
+        c.engine = SimpleNamespace(num_envs=4)
+        native = SimpleNamespace(goal_pos=[0., 0., 0.], goal_ori=torch.eye(3).numpy())
+        with torch.inference_mode():
+            c.reset(native)
+        for name in ("goal_pos", "goal_ori", "grip"):
+            self.assertFalse(torch.is_inference(getattr(c, name)))
+            getattr(c, name).zero_()
+
 
 if __name__ == "__main__":
     unittest.main()

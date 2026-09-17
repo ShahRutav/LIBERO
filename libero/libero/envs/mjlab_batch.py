@@ -22,6 +22,7 @@ class LiberoBatchEnv:
     action_spec = {"version": 1, "name": "libero_osc_pose_v1", "shape": [7],
                    "range": [-1, 1], "controller": "fixed_delta_OSC_POSE_PandaGripper"}
 
+    @torch.inference_mode(False)
     def __init__(self, env, initial_states, num_envs, device="cuda:0", horizon=500, seed=0,
                  initial_body_pos=None, initial_body_quat=None):
         import mujoco
@@ -65,7 +66,7 @@ class LiberoBatchEnv:
                        for j in range(self.model.njnt)],
             "objects": dict(zip(self.object_names, self.body_ids)),
         }
-        with self._scope():
+        with self._scope(), torch.inference_mode(False):
             self.controller = GPUOSC(self.engine, env.robots[0])
             self.elapsed = torch.zeros(num_envs, dtype=torch.long, device=device)
             self.previous_action = torch.zeros((num_envs, self.action_dim), device=device)
@@ -106,7 +107,7 @@ class LiberoBatchEnv:
     def _scope(self):
         caller = torch.cuda.current_stream(self.device)
         self.stream.wait_stream(caller)
-        with torch.cuda.stream(self.stream):
+        with torch.cuda.stream(self.stream), torch.no_grad():
             yield
         caller.wait_stream(self.stream)
 
@@ -231,7 +232,7 @@ class LiberoBatchEnv:
 
     def step(self, actions):
         with self._scope():
-            actions = torch.as_tensor(actions, device=self.device, dtype=torch.float64)
+            actions = torch.as_tensor(actions, device=self.device, dtype=torch.float64).detach()
             if actions.shape != (self.num_envs, self.action_dim):
                 raise ValueError(f"Expected actions {(self.num_envs, self.action_dim)}, got {tuple(actions.shape)}")
             if not torch.isfinite(actions).all():
@@ -249,7 +250,7 @@ class LiberoBatchEnv:
             success = self._success() & finite
             terminated = success | ~finite
             truncated = (self.elapsed >= self.horizon) & ~terminated
-            self.done = terminated | truncated
+            self.done.copy_(terminated | truncated)
             return obs, success.float(), terminated, truncated, {"success": success, "invalid_state": ~finite}
 
     def restore_recorded_state(self, raw_state, previous_action=None):
@@ -258,7 +259,7 @@ class LiberoBatchEnv:
             raise ValueError("Recorded-state conversion uses one world")
         with self._scope():
             if previous_action is not None:
-                action = torch.as_tensor(previous_action, device=self.device, dtype=torch.float64).reshape(1, -1)
+                action = torch.as_tensor(previous_action, device=self.device, dtype=torch.float64).detach().reshape(1, -1)
                 if action.shape != (1, self.action_dim) or not torch.isfinite(action).all():
                     raise ValueError("Invalid previous action")
                 action = action.clamp(-1, 1)

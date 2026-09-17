@@ -269,6 +269,20 @@ def run(args):
         # Existing matched-state GPU OSC/native controller parity gate.
         from scripts.benchmark_gpu_osc import validate_controller
         report["controller_parity"] = validate_controller(env, states[0], actions[:args.steps], batch.substeps, args.device)
+        buffers = [batch.controller.goal_pos, batch.controller.goal_ori, batch.controller.grip,
+                   batch.done, batch.previous_action, batch.elapsed]
+        addresses = [buffer.data_ptr() for buffer in buffers]
+        differentiable_actions = torch.zeros(4, 7, device=args.device, requires_grad=True)
+        with torch.inference_mode():
+            batch.step(differentiable_actions)
+        batch.reset(state_ids=ids)
+        observation = batch.step(differentiable_actions)[0]
+        assert not observation.requires_grad
+        current = [batch.controller.goal_pos, batch.controller.goal_ori, batch.controller.grip,
+                   batch.done, batch.previous_action, batch.elapsed]
+        assert [buffer.data_ptr() for buffer in current] == addresses
+        assert all(not torch.is_inference(buffer) and not buffer.requires_grad for buffer in current)
+        report["inference_to_training_reset"] = True
         report["passed"] = not args.diagnostic
     except Exception:
         args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -218,3 +218,28 @@ The diagnostic source is `3f092ad`. Its detailed contact record is
 Container `libero-ppo-replay-contact-diagnostic-20260917` exited nonzero on the
 mismatch as intended. Aggregate counts and replay success rates belong to the
 Sim2Real experiment's full replay report, not this stopped diagnostic.
+
+## Follow-up: evaluation-to-training reset ownership
+
+The first BC training attempt exposed an inference-context lifecycle bug.
+Evaluation created replacement controller goal tensors inside
+`torch.inference_mode()`. A subsequent normal-mode reset attempted to mutate
+those inference tensors and failed. The training attempt's results and failure
+remain in the Sim2Real run record; this correction does not turn that attempt
+into a completed PPO run.
+
+Source `ce7db28` keeps goal position, goal orientation, gripper accumulation,
+and episode-done tensors in their original buffers. Updates use in-place
+copies. Initialization creates normal tensors even under an inference context.
+Controller and simulator operations disable autograd, and actions are detached
+at the environment boundary.
+
+Four CPU tests passed in container
+`libero-ppo-cpu-inference-tests-2-20260917`, including full reset under inference,
+normal reset after inference-prefix updates, and action inputs requiring
+gradients. A short GPU gate also passed in
+`libero-ppo-batch-inference-reset-20260917`. It verified buffer identity,
+normal tensor ownership, evaluation followed by normal reset, and an outside
+inference step with gradient-enabled actions producing no gradient graph.
+The report is
+`/data/rutavms/libero-ppo-20260917/outputs/batch-inference-reset.json`.

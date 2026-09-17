@@ -59,12 +59,21 @@ class GPUOSC:
     def tensor(self, x):
         return torch.as_tensor(np.asarray(x), device=self.device, dtype=self.dtype)
 
+    @torch.no_grad()
     def reset(self, controller):
         n = self.engine.num_envs
-        self.goal_pos = self.tensor(controller.goal_pos).expand(n,-1).clone()
-        self.goal_ori = self.tensor(controller.goal_ori).expand(n,-1,-1).clone()
-        self.grip = torch.zeros((n,2), device=self.device, dtype=self.dtype)
+        # Persistent buffers must remain normal tensors even when setup/reset
+        # is called inside an evaluation inference context.
+        with torch.inference_mode(False):
+            if not hasattr(self, "goal_pos"):
+                self.goal_pos = torch.empty((n, 3), device=self.device, dtype=self.dtype)
+                self.goal_ori = torch.empty((n, 3, 3), device=self.device, dtype=self.dtype)
+                self.grip = torch.empty((n, 2), device=self.device, dtype=self.dtype)
+            self.goal_pos.copy_(self.tensor(controller.goal_pos).expand(n, -1))
+            self.goal_ori.copy_(self.tensor(controller.goal_ori).expand(n, -1, -1))
+            self.grip.zero_()
 
+    @torch.no_grad()
     def reset_indices(self, env_ids, goal_pos=None, goal_ori=None, grip=None):
         """Reset selected worlds after forward, preserving all other controllers."""
         d = self.engine.data
@@ -89,13 +98,14 @@ class GPUOSC:
         bias = d.qfrc_bias[:,self.vids].to(self.dtype)
         return pos, ori, jac, mass, q, v, bias
 
+    @torch.no_grad()
     def set_goal(self, action, pos, ori):
         """Policy-step controller memory, shared by live control and conversion."""
         scaled = (action[:,:6].clamp(self.input_min,self.input_max) - (self.input_max+self.input_min)/2)
         scaled = scaled * (self.output_max-self.output_min).abs() / (self.input_max-self.input_min).abs() + (self.output_max+self.output_min)/2
-        self.goal_pos = pos + scaled[:,:3]
+        self.goal_pos.copy_(pos + scaled[:,:3])
         if self.position_limits is not None:
-            self.goal_pos = self.goal_pos.clamp(self.position_limits[0],self.position_limits[1])
+            self.goal_pos.clamp_(self.position_limits[0],self.position_limits[1])
         aa = scaled[:,3:6]
         theta = torch.linalg.vector_norm(aa,dim=-1,keepdim=True)
         axis = aa / theta.clamp_min(1e-30)
@@ -103,8 +113,9 @@ class GPUOSC:
         zero = torch.zeros_like(x)
         skew = torch.stack((zero,-z,y,z,zero,-x,-y,x,zero),-1).reshape(-1,3,3)
         rot = torch.eye(3,device=self.device,dtype=self.dtype) + torch.sin(theta)[:,:,None]*skew + (1-torch.cos(theta))[:,:,None]*(skew@skew)
-        self.goal_ori = torch.where((theta > 0)[:,:,None],rot@ori,self.goal_ori)
+        self.goal_ori.copy_(torch.where((theta > 0)[:,:,None],rot@ori,self.goal_ori))
 
+    @torch.no_grad()
     def advance_memory(self, action, substeps):
         """Advance only persistent memory at a recorded state, without physics."""
         d = self.engine.data
@@ -114,9 +125,10 @@ class GPUOSC:
         # Match repeated float64 accumulator additions exactly; saturation is
         # monotonic within an action but one multiplied increment can round.
         for _ in range(substeps):
-            self.grip = (self.grip + self.grip_delta*torch.sign(action[:, 6:7])).clamp(-1, 1)
+            self.grip.copy_((self.grip + self.grip_delta*torch.sign(action[:, 6:7])).clamp(-1, 1))
         self.engine.data.ctrl[:, self.gids] = (self.grip_bias+self.grip_weight*self.grip).float()
 
+    @torch.no_grad()
     def control(self, action, policy_step):
         pos, ori, jac, mass, q, v, bias = self.state()
         if action.ndim == 1:
@@ -139,6 +151,6 @@ class GPUOSC:
         pose_torque = mass@(10*(self.initial_joint-q)-2*np.sqrt(10)*v)[:,:,None]
         torques = (jt@wrench + null.transpose(1,2)@pose_torque).squeeze(-1)+bias
         self.engine.data.ctrl[:,self.aids] = torques.clamp(self.low,self.high).float()
-        self.grip = (self.grip + self.grip_delta*torch.sign(action[:,6:7])).clamp(-1,1)
+        self.grip.copy_((self.grip + self.grip_delta*torch.sign(action[:,6:7])).clamp(-1,1))
         self.engine.data.ctrl[:,self.gids] = (self.grip_bias+self.grip_weight*self.grip).float()
         return torques
