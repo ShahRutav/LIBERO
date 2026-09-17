@@ -1,0 +1,119 @@
+"""Batched GPU equivalent of robosuite 1.4 fixed delta OSC_POSE + Panda gripper.
+
+Call on the simulation's Warp CUDA stream after forward(). No state readback
+occurs during control. Unsupported controller configurations fail explicitly.
+"""
+import numpy as np
+import torch
+
+
+class GPUOSC:
+    def __init__(self, engine, robot):
+        self.engine = engine
+        self.device = engine.data.qpos.device
+        self.dtype = torch.float64  # robosuite computes its controller in float64
+        c = robot.controller
+        if not (c.name == 'OSC_POSE' and c.impedance_mode == 'fixed' and c.use_delta
+                and c.interpolator_pos is None and c.interpolator_ori is None
+                and c.orientation_limits is None):
+            raise NotImplementedError('GPUOSC supports fixed delta OSC_POSE without interpolation/orientation limits')
+        if type(robot.gripper).__name__ != 'PandaGripper':
+            raise NotImplementedError('GPUOSC supports PandaGripper')
+        self.uncoupling = c.uncoupling
+        self.qids = torch.tensor(c.qpos_index, device=self.device)
+        self.vids = torch.tensor(c.qvel_index, device=self.device)
+        self.aids = torch.tensor(robot._ref_joint_actuator_indexes, device=self.device)
+        self.gids = torch.tensor([robot.sim.model.actuator_name2id(a) for a in robot.gripper.actuators], device=self.device)
+        self.site = robot.sim.model.site_name2id(c.eef_name)
+        model = robot.sim.model._model
+        body = model.site_bodyid[self.site]
+        self.root = int(model.body_rootid[body])
+        # The seven Panda arm DOFs all influence its grip site.
+        ancestors = set()
+        while body:
+            ancestors.add(body)
+            body = model.body_parentid[body]
+        if any(model.dof_bodyid[i] not in ancestors for i in c.qvel_index):
+            raise ValueError('Arm DOFs must be ancestors of the controlled site')
+        wm = engine.wp_model
+        adr, nnz, col = wm.M_rowadr.numpy(), wm.M_rownnz.numpy(), wm.M_colind.numpy()
+        lookup = {}
+        for i in range(model.nv):
+            for k in range(int(adr[i]), int(adr[i] + nnz[i])):
+                lookup[i, int(col[k])] = k
+        self.midx = torch.tensor([[lookup.get((i,j), lookup.get((j,i), -1)) for j in c.qvel_index]
+                                 for i in c.qvel_index], device=self.device)
+        if (self.midx < 0).any().item():
+            raise ValueError('Missing arm inertia entries')
+        for name in ('input_min','input_max','output_min','output_max','kp','kd','initial_joint'):
+            setattr(self, name, self.tensor(getattr(c,name)))
+        self.low, self.high = map(self.tensor, robot.torque_limits)
+        ranges = self.tensor(model.actuator_ctrlrange[self.gids.cpu().numpy()])
+        self.grip_bias = ranges.mean(-1)
+        self.grip_weight = (ranges[:,1] - ranges[:,0]) / 2
+        self.grip_delta = self.tensor([-1,1]) * robot.gripper.speed
+        self.position_limits = None if c.position_limits is None else self.tensor(c.position_limits)
+        self.eye = torch.eye(len(c.qvel_index), dtype=self.dtype, device=self.device)
+        self.reset(c)
+
+    def tensor(self, x):
+        return torch.as_tensor(np.asarray(x), device=self.device, dtype=self.dtype)
+
+    def reset(self, controller):
+        n = self.engine.num_envs
+        self.goal_pos = self.tensor(controller.goal_pos).expand(n,-1).clone()
+        self.goal_ori = self.tensor(controller.goal_ori).expand(n,-1,-1).clone()
+        self.grip = torch.zeros((n,2), device=self.device, dtype=self.dtype)
+
+    def state(self):
+        d = self.engine.data
+        pos = d.site_xpos[:,self.site].to(self.dtype)
+        ori = d.site_xmat[:,self.site].reshape(-1,3,3).to(self.dtype)
+        cdof = d.cdof[:,self.vids].to(self.dtype)
+        offset = pos - d.subtree_com[:,self.root].to(self.dtype)
+        jr = cdof[:,:,:3].transpose(1,2)
+        jp = (cdof[:,:,3:] + torch.linalg.cross(cdof[:,:,:3], offset[:,None,:], dim=-1)).transpose(1,2)
+        jac = torch.cat((jp,jr), dim=1)
+        mass = d.M[:,self.midx].to(self.dtype)
+        q = d.qpos[:,self.qids].to(self.dtype)
+        v = d.qvel[:,self.vids].to(self.dtype)
+        bias = d.qfrc_bias[:,self.vids].to(self.dtype)
+        return pos, ori, jac, mass, q, v, bias
+
+    def control(self, action, policy_step):
+        pos, ori, jac, mass, q, v, bias = self.state()
+        if action.ndim == 1:
+            action = action.expand(pos.shape[0],-1)
+        if policy_step:
+            scaled = (action[:,:6].clamp(self.input_min,self.input_max) - (self.input_max+self.input_min)/2)
+            scaled = scaled * (self.output_max-self.output_min).abs() / (self.input_max-self.input_min).abs() + (self.output_max+self.output_min)/2
+            self.goal_pos = pos + scaled[:,:3]
+            if self.position_limits is not None:
+                self.goal_pos = self.goal_pos.clamp(self.position_limits[0],self.position_limits[1])
+            aa = scaled[:,3:6]
+            theta = torch.linalg.vector_norm(aa,dim=-1,keepdim=True)
+            axis = aa / theta.clamp_min(1e-30)
+            x,y,z = axis.unbind(-1)
+            zero = torch.zeros_like(x)
+            skew = torch.stack((zero,-z,y,z,zero,-x,-y,x,zero),-1).reshape(-1,3,3)
+            rot = torch.eye(3,device=self.device,dtype=self.dtype) + torch.sin(theta)[:,:,None]*skew + (1-torch.cos(theta))[:,:,None]*(skew@skew)
+            self.goal_ori = torch.where((theta > 0)[:,:,None],rot@ori,self.goal_ori)
+        error_ori = 0.5 * torch.linalg.cross(ori.transpose(1,2),self.goal_ori.transpose(1,2),dim=-1).sum(1)
+        desired = torch.cat((self.goal_pos-pos,error_ori),-1)*self.kp - (jac@v[:,:,None]).squeeze(-1)*self.kd
+        # Match np.linalg.pinv default rcond=1e-15, including singular cases.
+        minv = torch.linalg.inv(mass)
+        jt = jac.transpose(1,2)
+        linv = jac@minv@jt
+        lam = torch.linalg.pinv(linv,rtol=1e-15)
+        if self.uncoupling:
+            wrench = torch.cat((torch.linalg.pinv(linv[:,:3,:3],rtol=1e-15)@desired[:,:3,None],
+                                 torch.linalg.pinv(linv[:,3:,3:],rtol=1e-15)@desired[:,3:,None]),1)
+        else:
+            wrench = lam@desired[:,:,None]
+        null = self.eye - minv@jt@lam@jac
+        pose_torque = mass@(10*(self.initial_joint-q)-2*np.sqrt(10)*v)[:,:,None]
+        torques = (jt@wrench + null.transpose(1,2)@pose_torque).squeeze(-1)+bias
+        self.engine.data.ctrl[:,self.aids] = torques.clamp(self.low,self.high).float()
+        self.grip = (self.grip + self.grip_delta*torch.sign(action[:,6:7])).clamp(-1,1)
+        self.engine.data.ctrl[:,self.gids] = (self.grip_bias+self.grip_weight*self.grip).float()
+        return torques
