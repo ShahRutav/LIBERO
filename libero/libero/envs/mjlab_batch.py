@@ -22,7 +22,8 @@ class LiberoBatchEnv:
     action_spec = {"version": 1, "name": "libero_osc_pose_v1", "shape": [7],
                    "range": [-1, 1], "controller": "fixed_delta_OSC_POSE_PandaGripper"}
 
-    def __init__(self, env, initial_states, num_envs, device="cuda:0", horizon=500, seed=0):
+    def __init__(self, env, initial_states, num_envs, device="cuda:0", horizon=500, seed=0,
+                 initial_body_pos=None, initial_body_quat=None):
         import mujoco
         import warp as wp
         from mjlab.sim import Simulation, SimulationCfg
@@ -38,6 +39,16 @@ class LiberoBatchEnv:
         if not np.isfinite(self.initial_states).all():
             raise ValueError("Nonfinite reset states")
         self.engine = Simulation(num_envs, SimulationCfg(mujoco=_PreserveOptions()), model=self.model, device=str(device))
+        if (initial_body_pos is None) != (initial_body_quat is None):
+            raise ValueError("Both body pose banks are required")
+        self._body_pose_banks = {}
+        if initial_body_pos is not None:
+            for name, values, dim in (("body_pos", initial_body_pos, 3), ("body_quat", initial_body_quat, 4)):
+                array = np.asarray(values)
+                if array.shape != (len(self.initial_states), self.model.nbody, dim) or not np.isfinite(array).all():
+                    raise ValueError(f"Invalid {name} reset bank")
+                self._body_pose_banks[name] = torch.as_tensor(array, device=device, dtype=torch.float32)
+            self.engine.expand_model_fields(("body_pos", "body_quat"))
         self.stream = torch.cuda.ExternalStream(wp.get_stream(self.engine.wp_device).cuda_stream, device=device)
         self.rng = torch.Generator(device=device).manual_seed(seed)
         ratio = env.env.control_timestep / env.env.model_timestep
@@ -146,6 +157,8 @@ class LiberoBatchEnv:
             if bool(((state_ids < 0) | (state_ids >= len(self.initial_states))).any()):
                 raise ValueError("state_ids outside reset bank")
             self.engine.reset(ids)
+            for name, bank in self._body_pose_banks.items():
+                getattr(self.engine.model, name)[ids] = bank[state_ids]
             self._inject(ids, self._reset_bank[state_ids])
             self.controller.reset_indices(ids)
             self.previous_action[ids] = 0
@@ -215,7 +228,13 @@ class LiberoBatchEnv:
             angular = d.cvel[:, self.body_ids, :3]
             offset = d.xpos[:, self.body_ids] - d.subtree_com[:, self.model.body_rootid[self.body_ids]]
             linear = d.cvel[:, self.body_ids, 3:] + torch.linalg.cross(angular, offset, dim=-1)
-            return {"qpos": d.qpos[:].clone(), "qvel": d.qvel[:].clone(), "act": d.act[:].clone(),
+            import warp as wp
+            body_pos = wp.to_torch(self.engine.wp_model.body_pos)
+            body_quat = wp.to_torch(self.engine.wp_model.body_quat)
+            if body_pos.shape[0] == 1:
+                body_pos = body_pos.expand(self.num_envs, -1, -1)
+                body_quat = body_quat.expand(self.num_envs, -1, -1)
+            return {"model_body_pos": body_pos.clone(), "model_body_quat": body_quat.clone(), "qpos": d.qpos[:].clone(), "qvel": d.qvel[:].clone(), "act": d.act[:].clone(),
                     "object_position": d.xpos[:, self.body_ids].clone(),
                     "object_linear_velocity": linear.clone(), "object_angular_velocity": angular.clone(),
                     "object_quaternion_wxyz": d.xquat[:, self.body_ids].clone(),
