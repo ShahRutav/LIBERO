@@ -6,6 +6,7 @@ No cameras, observation manager, policy inference, or reset/setup in timings.
 
 import argparse
 import copy
+import gc
 import hashlib
 import importlib.metadata
 import json
@@ -132,8 +133,11 @@ class Batch:
 
     def close(self):
         self.engine = None
-        for sim in self.hosts:
-            sim.free()
+        # No render contexts are created for these mirrors. MjSim.free calls
+        # a full gc.collect per world; drop all references and collect once.
+        self.robots = []
+        self.hosts = []
+        gc.collect()
 
 
 def controlled(batch, actions, substeps, collect_torques=False):
