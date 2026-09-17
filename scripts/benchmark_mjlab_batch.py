@@ -6,10 +6,12 @@ No cameras, observation manager, policy inference, or reset/setup in timings.
 
 import argparse
 import copy
+import gc
 import hashlib
 import importlib.metadata
 import json
 import os
+import resource
 from pathlib import Path
 import time
 
@@ -131,8 +133,11 @@ class Batch:
 
     def close(self):
         self.engine = None
-        for sim in self.hosts:
-            sim.free()
+        # No render contexts are created for these mirrors. MjSim.free calls
+        # a full gc.collect per world; drop all references and collect once.
+        self.robots = []
+        self.hosts = []
+        gc.collect()
 
 
 def controlled(batch, actions, substeps, collect_torques=False):
@@ -191,6 +196,9 @@ def main():
     parser.add_argument("--demo", default="demo_0")
     parser.add_argument("--backends", nargs="+", choices=["mujoco", "mjlab"],
                         default=["mujoco", "mjlab"])
+    parser.add_argument("--scopes", nargs="+",
+                        choices=["cpu_osc_and_physics", "physics_only_torque_replay"],
+                        default=["cpu_osc_and_physics", "physics_only_torque_replay"])
     args = parser.parse_args()
     if args.repeats < 1 or min(args.sizes) < 1:
         parser.error("sizes and repeats must be positive")
@@ -265,7 +273,7 @@ def main():
             for backend in args.backends:
                 batch = Batch(env, count, backend, initial, args.device)
                 try:
-                    for scope in ("cpu_osc_and_physics", "physics_only_torque_replay"):
+                    for scope in args.scopes:
                         # Warm the entire workload before reset and timing.
                         batch.reset()
                         if scope == "cpu_osc_and_physics":
@@ -289,6 +297,13 @@ def main():
                             print(backend, count, scope, trial, round(elapsed, 3),
                                   "success", outcome["success_count"], flush=True)
                         row = timing_record(backend, count, scope, seconds, len(actions), substeps, outcomes)
+                        if batch.engine is not None:
+                            free, total = torch.cuda.mem_get_info(args.device)
+                            # Includes Warp allocations, unlike Torch's allocator
+                            # statistics. Device-wide snapshot, not a peak.
+                            row["device_used_mib_after_trials"] = (total - free) / 2**20
+                            row["device_total_mib"] = total / 2**20
+                        row["process_peak_rss_mib"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
                         report["rows"].append(row)
                         (args.output / "report.json").write_text(json.dumps(report, indent=2))
                 finally:
