@@ -143,6 +143,35 @@ class LiberoBatchEnv:
             d.act[ids] = states[:, -m.na:].to(d.act.dtype)
         self.engine.forward()
 
+    def set_reset_bank(self, initial_states, initial_body_pos=None, initial_body_quat=None):
+        """Replace reset candidates after caller verifies model compatibility.
+
+        Does not reset live worlds. Only fixed-fixture body poses may differ;
+        equal array dimensions do not establish XML/model compatibility.
+        """
+        states = np.asarray(initial_states, dtype=np.float64)
+        width = 1 + self.model.nq + self.model.nv + self.model.na
+        if states.ndim != 2 or not len(states) or states.shape[1] != width or not np.isfinite(states).all():
+            raise ValueError(f"Expected finite nonempty reset states [S,{width}]")
+        if (initial_body_pos is None) != (initial_body_quat is None):
+            raise ValueError("Both body pose banks are required")
+        poses = {}
+        if initial_body_pos is not None:
+            for name, values, dim in (("body_pos", initial_body_pos, 3), ("body_quat", initial_body_quat, 4)):
+                array = np.asarray(values)
+                if array.shape != (len(states), self.model.nbody, dim) or not np.isfinite(array).all():
+                    raise ValueError(f"Invalid {name} reset bank")
+                poses[name] = array
+        elif self._body_pose_banks:
+            raise ValueError("Replacing a fixture-aware bank requires body poses")
+        with self._scope():
+            if poses and not self._body_pose_banks:
+                self.engine.expand_model_fields(("body_pos", "body_quat"))
+            self.initial_states = states.copy()
+            self._reset_bank = torch.as_tensor(states, device=self.device)
+            self._body_pose_banks = {name: torch.as_tensor(array, device=self.device, dtype=torch.float32)
+                                     for name, array in poses.items()}
+
     def reset(self, env_ids=None, state_ids=None):
         with self._scope():
             ids = torch.arange(self.num_envs, device=self.device) if env_ids is None else torch.as_tensor(env_ids, device=self.device, dtype=torch.long)
