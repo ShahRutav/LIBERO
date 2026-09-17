@@ -334,3 +334,16 @@ Keep durable datasets and reports in the experiment's registered S3 locations.
 Use task-owned pod staging only while needed. Remove staging after verifying
 publication; retain a small named debugging bundle if needed. Do not clean
 shared source caches or unrelated runs.
+
+For a native/GPU success-label discrepancy, call the diagnostic helper
+`predicate_parity(batch, diagnostics_path=..., context=...)` from the gate
+module. It writes world/time, goal positions, matching native/GPU contact pairs,
+distances, and state before raising. `LIBERO_PREDICATE_DIAGNOSTICS` supplies a
+JSONL path when the caller cannot pass one directly.
+
+An aggregate audit can use `raise_on_mismatch=False` to retain collision-label
+differences and continue replay. This returns a dictionary with native/GPU
+labels, mismatch records, and a separate logical parity result. Logical
+predicate errors on identical GPU contact inputs always raise. Report collision
+mismatch counts explicitly; do not label a run with mismatches as exact native
+predicate parity or change reward tolerances just to silence the diagnostic.

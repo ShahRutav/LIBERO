@@ -181,3 +181,40 @@ Task-owned pod artifacts are under
 The accepted final container was `libero-ppo-batch-fastprefix-20260917`.
 These paths identify working evidence, not permanent storage guarantees.
 The Sim2Real experiment owns verified S3 publication and staging cleanup.
+
+## Follow-up: shallow-contact disagreement in 50-demo replay
+
+A later free replay of all 50 demonstrations exposed a native/GPU predicate
+disagreement outside the short gate's snapshots. A diagnostic replay stopped
+at world 10, elapsed control step 108. Native MuJoCo reported success and
+MuJoCo-Warp did not.
+
+The diagnostic isolated the difference to contact generation:
+
+- Both backends had identical top and bottom body positions.
+- Horizontal center distance was 0.01353995 m, safely inside the 0.03 m criterion.
+- Native collision detection returned one contact between
+  `akita_black_bowl_1_g40` and `plate_1_g1` at distance `-2.71365e-5` m.
+- GPU collision detection returned no bowl/plate contact pair.
+- An independent CPU evaluation using the downloaded GPU contact pairs and
+  GPU positions agreed with the GPU predicate logic.
+
+This is evidence of a shallow 27-micrometer native contact disagreement. It
+does not identify whether narrow-phase algorithm differences or numerical
+precision caused it. No predicate threshold or production reward was changed.
+The earlier native/GPU agreement remains valid for the snapshots tested;
+it is not a guarantee of identical collision labels at every trajectory state.
+
+The diagnostic helper now separates two checks. Logical disagreement on
+identical GPU contacts and positions always fails. Native/GPU collision-label
+differences fail by default, but an aggregate replay audit may request explicit
+collection with `raise_on_mismatch=False`. That mode returns both labels and
+all mismatches; it must not be reported as perfect native predicate parity.
+Each mismatch includes world/time, optional source context, goal geometry,
+contact names and distances, physical state, and collision settings.
+
+The diagnostic source is `3f092ad`. Its detailed contact record is
+`/data/rutavms/libero-ppo-20260917/outputs/predicate-contact-diagnostic.jsonl`.
+Container `libero-ppo-replay-contact-diagnostic-20260917` exited nonzero on the
+mismatch as intended. Aggregate counts and replay success rates belong to the
+Sim2Real experiment's full replay report, not this stopped diagnostic.
