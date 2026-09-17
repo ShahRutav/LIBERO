@@ -71,6 +71,21 @@ class LiberoBatchEnv:
             self.previous_action = torch.zeros((num_envs, self.action_dim), device=device)
             self.done = torch.zeros(num_envs, dtype=torch.bool, device=device)
             self._reset_bank = torch.as_tensor(self.initial_states, device=device)
+        native_controller = env.robots[0].controller
+        self.action_spec = dict(type(self).action_spec)
+        self.action_spec.update({
+            "control_dt": float(env.env.control_timestep),
+            "physics_dt": float(env.env.model_timestep), "substeps": self.substeps,
+            "uncoupling": bool(native_controller.uncoupling),
+            "gripper_speed": float(env.robots[0].gripper.speed),
+            "clipping": "normalized_action_clipped_to_minus1_plus1_then_controller_input_bounds",
+            "gripper_accumulation": "sign_of_action_every_physics_substep_clamped_minus1_plus1",
+            "zero_rotation_action": "retain_previous_orientation_goal",
+        })
+        for name in ("input_min", "input_max", "output_min", "output_max", "kp", "kd", "initial_joint"):
+            self.action_spec[name] = np.asarray(getattr(native_controller, name)).tolist()
+        self.action_spec["position_limits"] = (None if native_controller.position_limits is None
+                                                 else np.asarray(native_controller.position_limits).tolist())
         self._goals = self._compile_goals()
         fields = [("qpos", [self.model.nq]), ("qvel", [self.model.nv]), ("act", [self.model.na])]
         for name in self.object_names:
@@ -241,9 +256,14 @@ class LiberoBatchEnv:
         """Teacher-forced reference state with action-prefix controller memory."""
         if self.num_envs != 1:
             raise ValueError("Recorded-state conversion uses one world")
-        if previous_action is not None:
-            self.step(torch.as_tensor(previous_action).reshape(1, -1))
         with self._scope():
+            if previous_action is not None:
+                action = torch.as_tensor(previous_action, device=self.device, dtype=torch.float64).reshape(1, -1)
+                if action.shape != (1, self.action_dim) or not torch.isfinite(action).all():
+                    raise ValueError("Invalid previous action")
+                action = action.clamp(-1, 1)
+                self.controller.advance_memory(action, self.substeps)
+                self.previous_action.copy_(action)
             raw = torch.as_tensor(raw_state, dtype=torch.float64, device=self.device).reshape(1, -1)
             if not torch.isfinite(raw).all():
                 raise ValueError("Nonfinite recorded state")

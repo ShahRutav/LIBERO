@@ -89,24 +89,40 @@ class GPUOSC:
         bias = d.qfrc_bias[:,self.vids].to(self.dtype)
         return pos, ori, jac, mass, q, v, bias
 
+    def set_goal(self, action, pos, ori):
+        """Policy-step controller memory, shared by live control and conversion."""
+        scaled = (action[:,:6].clamp(self.input_min,self.input_max) - (self.input_max+self.input_min)/2)
+        scaled = scaled * (self.output_max-self.output_min).abs() / (self.input_max-self.input_min).abs() + (self.output_max+self.output_min)/2
+        self.goal_pos = pos + scaled[:,:3]
+        if self.position_limits is not None:
+            self.goal_pos = self.goal_pos.clamp(self.position_limits[0],self.position_limits[1])
+        aa = scaled[:,3:6]
+        theta = torch.linalg.vector_norm(aa,dim=-1,keepdim=True)
+        axis = aa / theta.clamp_min(1e-30)
+        x,y,z = axis.unbind(-1)
+        zero = torch.zeros_like(x)
+        skew = torch.stack((zero,-z,y,z,zero,-x,-y,x,zero),-1).reshape(-1,3,3)
+        rot = torch.eye(3,device=self.device,dtype=self.dtype) + torch.sin(theta)[:,:,None]*skew + (1-torch.cos(theta))[:,:,None]*(skew@skew)
+        self.goal_ori = torch.where((theta > 0)[:,:,None],rot@ori,self.goal_ori)
+
+    def advance_memory(self, action, substeps):
+        """Advance only persistent memory at a recorded state, without physics."""
+        d = self.engine.data
+        pos = d.site_xpos[:, self.site].to(self.dtype)
+        ori = d.site_xmat[:, self.site].reshape(-1, 3, 3).to(self.dtype)
+        self.set_goal(action, pos, ori)
+        # Match repeated float64 accumulator additions exactly; saturation is
+        # monotonic within an action but one multiplied increment can round.
+        for _ in range(substeps):
+            self.grip = (self.grip + self.grip_delta*torch.sign(action[:, 6:7])).clamp(-1, 1)
+        self.engine.data.ctrl[:, self.gids] = (self.grip_bias+self.grip_weight*self.grip).float()
+
     def control(self, action, policy_step):
         pos, ori, jac, mass, q, v, bias = self.state()
         if action.ndim == 1:
             action = action.expand(pos.shape[0],-1)
         if policy_step:
-            scaled = (action[:,:6].clamp(self.input_min,self.input_max) - (self.input_max+self.input_min)/2)
-            scaled = scaled * (self.output_max-self.output_min).abs() / (self.input_max-self.input_min).abs() + (self.output_max+self.output_min)/2
-            self.goal_pos = pos + scaled[:,:3]
-            if self.position_limits is not None:
-                self.goal_pos = self.goal_pos.clamp(self.position_limits[0],self.position_limits[1])
-            aa = scaled[:,3:6]
-            theta = torch.linalg.vector_norm(aa,dim=-1,keepdim=True)
-            axis = aa / theta.clamp_min(1e-30)
-            x,y,z = axis.unbind(-1)
-            zero = torch.zeros_like(x)
-            skew = torch.stack((zero,-z,y,z,zero,-x,-y,x,zero),-1).reshape(-1,3,3)
-            rot = torch.eye(3,device=self.device,dtype=self.dtype) + torch.sin(theta)[:,:,None]*skew + (1-torch.cos(theta))[:,:,None]*(skew@skew)
-            self.goal_ori = torch.where((theta > 0)[:,:,None],rot@ori,self.goal_ori)
+            self.set_goal(action, pos, ori)
         error_ori = 0.5 * torch.linalg.cross(ori.transpose(1,2),self.goal_ori.transpose(1,2),dim=-1).sum(1)
         desired = torch.cat((self.goal_pos-pos,error_ori),-1)*self.kp - (jac@v[:,:,None]).squeeze(-1)*self.kd
         # Match np.linalg.pinv default rcond=1e-15, including singular cases.
