@@ -1,7 +1,7 @@
 # mjlab backend
 
 Status: Active
-Last verified: 2026-09-16
+Last verified: 2026-09-17
 
 LIBERO can run its existing environments with `backend="mjlab"`. Physics steps
 run through `mjlab.sim.Simulation` and MuJoCo-Warp on one GPU. Task definitions,
@@ -117,9 +117,10 @@ A truncated `--max-steps` run cannot pass the full-replay gate.
   clears the complete mjlab state, including solver and collision buffers.
 
 Direct runtime edits of model physics other than fixed-body poses are not
-tracked automatically. Recreate the environment after those edits. This
-prototype has not ported controllers, predicates, or rendering to batched GPU
-operations, and it does not claim a training throughput improvement.
+tracked automatically. Recreate the environment after those edits. The single-world compatibility interface keeps CPU-facing observations and
+predicates. The separate [training batch API](#privileged-state-training-batch)
+uses GPU control, observations, and supported predicates. Neither interface
+provides batched rendering.
 
 ## Validation
 
@@ -129,8 +130,9 @@ Run all simulator tests on the GPU machine:
 python -m unittest discover -s tests -v
 ```
 
-The three `test_model_compat.py` cases use only the Python standard library and
-can run locally. Other tests instantiate a real LIBERO model and mjlab GPU world.
+The three `test_model_compat.py` cases use only the Python standard library.
+`test_gpu_osc_indexed_reset.py` uses CPU tensors only. These can run without a
+GPU or model compilation. Simulator integration tests require the GPU pod.
 They cover three benchmark initial states, GPU-only integration, fixed fixture
 updates, hard-reset references, gripper reset, and bounded error handling.
 
@@ -243,8 +245,92 @@ The benchmark supports independent per-world controller state but replays one
 shared task, initial state, and action sequence for comparison. Cameras,
 observations, policy inference, reset/setup, and final predicate evaluation
 remain outside the timer. `OffScreenRenderEnv` remains the existing single-world
-compatibility interface; this branch's batched controller is exercised through
-`benchmark_gpu_osc`, not through a new camera/vector environment API.
+compatibility interface. The benchmark retains its existing scope; the separate
+training batch API below adds privileged observations, rewards, and indexed resets.
 
 See the [measured GPU controller results](../results/2026-09-17-gpu-controller.md)
 for success, throughput, memory headroom, and the tested batch range.
+
+
+## Privileged-state training batch
+
+Use `libero.libero.envs.mjlab_batch.LiberoBatchEnv` for independent GPU worlds
+with privileged observations. Run model preparation, construction, stepping,
+and conversion on the GPU pod. The calling application owns the prepared
+native `ControlEnv` and must load the exact source XML before construction.
+The existing `backend="mjlab"` single-world API remains unchanged.
+
+The constructor accepts:
+
+- `env`: prepared native task and controller metadata.
+- `initial_states`: finite `[S, 1+nq+nv+na]` reset candidates.
+- `num_envs`, `device`, `horizon`, and `seed`.
+- Optional `initial_body_pos[S,nbody,3]` and
+  `initial_body_quat[S,nbody,4]` banks, aligned with reset candidates.
+
+Certify model compatibility before combining candidates. Matching array
+sizes is insufficient. The current conversion permits explicitly identified
+fixed-fixture pose differences; other XML differences require separate models
+or a new validated extension. The batch expands model body-pose fields per
+world and rebuilds simulation graphs before using those fields.
+
+The training interface is:
+
+- `reset(env_ids=None, state_ids=None)` resets selected worlds and returns all
+  observations. It clears physics, controller goals, gripper accumulation,
+  previous actions, and episode bookkeeping for those worlds.
+- `step(actions[N,7])` returns observations, binary rewards, terminations,
+  truncations, and success/invalid-state information. It does not auto-reset.
+  The caller must retain terminal observations before resetting done worlds.
+- `observe()` uses the same observation builder as demonstration conversion.
+- `set_reset_bank(...)` replaces compatible candidates without resetting live
+  worlds. Supply body-pose banks when replacing a fixture-aware bank.
+- `restore_recorded_state(state, previous_action)` reconstructs a one-world
+  demonstration prefix. It advances persistent controller memory, injects the
+  recorded physical state, and produces the shared observation.
+- `export_state()` returns physical, object, controller, and model-pose tensors.
+  `close()` releases the batch; the caller closes its native environment.
+
+Observation dimensions come from the model and ordered schema. Fields include
+all qpos/qvel/act, named objects and fixtures, their world poses and velocities,
+end-effector state, controller goals, gripper accumulation, and previous action.
+The schema specifies orientation packing and quaternion ordering. Check its
+hash when loading converted data or checkpoints.
+
+`action_spec` records control/physics timing, substeps, input/output scaling,
+gains, nullspace reference, coupling, position limits, gripper speed, and
+clipping/accumulation semantics. Compare the full specification before reuse;
+seven action dimensions alone do not establish compatibility.
+
+Only the existing fixed delta OSC_POSE/Panda controller and conjunctions of
+object `On` predicates are supported. Site predicates and other goal types
+fail explicitly. `On` uses matching contact geometry, vertical ordering, and
+the native 3 cm horizontal-center criterion. Sparse reward is one on success;
+success and invalid states terminate, while horizon expiry truncates.
+
+Run the gate inside the pinned pod container from this repository root:
+
+```bash
+python -m scripts.validate_mjlab_training_batch \
+  --dataset /source/task.hdf5 \
+  --output /work/outputs/batch-gate.json --steps 8
+```
+
+The gate uses heterogeneous stable starts and fixture poses. It checks matched
+controller inputs, world permutations, one-versus-many stepping, partial resets,
+positive/negative native predicates, observation parity, and fast prefix memory.
+It records physical-field errors and bounds. `--diagnostic` measures differences
+without accepting rollout equivalence and always writes `passed: false`.
+Failures preserve a compact NPZ reproduction bundle and available JSON metrics.
+
+The accepted short-rollout bounds are `1e-5` absolute for position, orientation,
+and other nonvelocity fields, and `1e-3` for velocity fields. Reset isolation
+and fast-prefix memory comparisons are exact. These bounds are not a claim of
+deterministic long contact-rich trajectories. See the
+[training-batch validation result](../results/2026-09-17-mjlab-training-batch.md)
+for measured errors and the rejected mid-grasp reproducibility test.
+
+Keep durable datasets and reports in the experiment's registered S3 locations.
+Use task-owned pod staging only while needed. Remove staging after verifying
+publication; retain a small named debugging bundle if needed. Do not clean
+shared source caches or unrelated runs.
