@@ -1,6 +1,7 @@
 """GPU-pod batch correctness gate. Writes compact report; fails on divergence."""
 import argparse
 import json
+import os
 from pathlib import Path
 import numpy as np
 import torch
@@ -74,16 +75,37 @@ def compare_observations(batch, actual, expected, label, report, diagnostic):
                 raise AssertionError(f"{label}/{name}: max_abs={error} exceeds {tolerances[name]}")
 
 
-def predicate_parity(batch):
-    """Evaluate native predicates on the exact GPU states, excluding dynamics drift."""
+def predicate_parity(batch, *, diagnostics_path=None, context=None, raise_on_mismatch=True):
+    """Compare native collision results and independently check GPU logic.
+
+    Native/GPU contact generation can differ at collision boundaries. A caller
+    may collect those mismatches explicitly; logical disagreement on identical
+    GPU contacts and positions always raises. Default remains strict.
+    """
     import mujoco
+    import warp as wp
     from robosuite.utils.binding_utils import MjSim
     sim = MjSim(batch.model)
     native = batch.env.env
     old = native.sim
     states = batch.export_state()
-    expected = []
+    with batch._scope():
+        actual = batch._success().cpu().tolist()
+        count = int(wp.to_torch(batch.engine.wp_data.nacon).reshape(-1)[0])
+        contacts = batch.engine.wp_data.contact
+        gpu_geoms = wp.to_torch(contacts.geom)[:count].cpu().numpy()
+        gpu_worlds = wp.to_torch(contacts.worldid)[:count].cpu().numpy()
+        gpu_dist = wp.to_torch(contacts.dist)[:count].cpu().numpy()
+        gpu_pos = batch.engine.data.xpos[:].cpu().numpy()
+        gpu_rot = batch.engine.data.xmat[:].cpu().numpy()
+        times = batch.engine.data.time[:].cpu().tolist()
+        elapsed = batch.elapsed.cpu().tolist()
+    expected, mismatches = [], []
     saved_pos, saved_quat = batch.model.body_pos.copy(), batch.model.body_quat.copy()
+    def describe_contact(pair, distance):
+        return {"geom_ids": [int(g) for g in pair], "geom_names": [
+            mujoco.mj_id2name(batch.model, mujoco.mjtObj.mjOBJ_GEOM, int(g)) if g >= 0 else None
+            for g in pair], "distance": float(distance)}
     try:
         native.sim = sim
         for i in range(batch.num_envs):
@@ -95,15 +117,59 @@ def predicate_parity(batch):
                 sim.data.act[:] = states["act"][i].cpu().numpy()
             sim.forward()
             expected.append(bool(batch.env.check_success()))
+            world_mask = gpu_worlds == i
+            pairs, distances = gpu_geoms[world_mask], gpu_dist[world_mask]
+            logical, goal_details = True, []
+            for top, bottom, top_ids, bottom_ids in batch._goals:
+                top_set, bottom_set = set(top_ids.cpu().tolist()), set(bottom_ids.cpu().tolist())
+                def is_goal_contact(pair):
+                    a, b = map(int, pair)
+                    return (a in top_set and b in bottom_set) or (b in top_set and a in bottom_set)
+                gpu_matches = [describe_contact(pair, distance) for pair, distance in zip(pairs, distances)
+                               if is_goal_contact(pair)]
+                native_matches = [describe_contact((c.geom1, c.geom2), c.dist)
+                                  for c in sim.data.contact[:sim.data.ncon]
+                                  if is_goal_contact((c.geom1, c.geom2))]
+                gp, gq = gpu_pos[i, top], gpu_pos[i, bottom]
+                cpu_p, cpu_q = sim.data.body_xpos[top].copy(), sim.data.body_xpos[bottom].copy()
+                gpu_xy, cpu_xy = float(np.linalg.norm(gp[:2]-gq[:2])), float(np.linalg.norm(cpu_p[:2]-cpu_q[:2]))
+                logical = logical and bool(gpu_matches) and bool(gp[2] >= gq[2]) and gpu_xy < .03
+                goal_details.append({"top_body": int(top), "bottom_body": int(bottom),
+                                     "gpu_top_position": gp.tolist(), "gpu_bottom_position": gq.tolist(),
+                                     "native_top_position": cpu_p.tolist(), "native_bottom_position": cpu_q.tolist(),
+                                     "gpu_xy_distance": gpu_xy, "native_xy_distance": cpu_xy,
+                                     "gpu_geometry_satisfied": bool(gp[2] >= gq[2]) and gpu_xy < .03,
+                                     "native_geometry_satisfied": bool(cpu_p[2] >= cpu_q[2]) and cpu_xy < .03,
+                                     "max_body_rotation_error": max(float(np.max(np.abs(gpu_rot[i, body].reshape(3, 3)-sim.data.body_xmat[body].reshape(3, 3)))) for body in (top, bottom)),
+                                     "gpu_contact_pairs": gpu_matches, "native_contact_pairs": native_matches})
+            if logical != actual[i]:
+                raise AssertionError(f"GPU predicate logic differs on identical contacts/world {i}: {goal_details}")
+            if expected[-1] != actual[i]:
+                mismatches.append({"world": i, "elapsed": elapsed[i], "time": times[i],
+                                   "native_success": expected[-1], "gpu_success": actual[i],
+                                   "goals": goal_details,
+                                   "qpos": states["qpos"][i].cpu().tolist(),
+                                   "qvel": states["qvel"][i].cpu().tolist()})
     finally:
         native.sim = old
         batch.model.body_pos[:] = saved_pos
         batch.model.body_quat[:] = saved_quat
-    with batch._scope():
-        actual = batch._success().cpu().tolist()
-    if expected != actual:
-        raise AssertionError(f"Native/GPU predicate mismatch: {expected} != {actual}")
-    return actual
+    if mismatches:
+        record = {"context": context, "mismatches": mismatches, "gpu_logic_matches": True,
+                  "model_collision_options": {name: float(getattr(batch.model.opt, name))
+                      for name in ("ccd_tolerance", "ccd_iterations", "tolerance")
+                      if hasattr(batch.model.opt, name)}}
+        destination = diagnostics_path or os.environ.get("LIBERO_PREDICATE_DIAGNOSTICS")
+        if destination:
+            path = Path(destination)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a") as stream:
+                stream.write(json.dumps(record)+"\n")
+        print("predicate_collision_mismatch "+json.dumps(record), flush=True)
+        if raise_on_mismatch:
+            raise AssertionError(f"Native/GPU collision predicate mismatch in worlds {[m['world'] for m in mismatches]}")
+    return actual if raise_on_mismatch else {"native": expected, "gpu": actual, "mismatches": mismatches,
+                                           "gpu_logic_matches": True}
 
 
 def run(args):
