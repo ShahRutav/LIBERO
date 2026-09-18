@@ -11,6 +11,28 @@ from robosuite.utils.transform_utils import quat_multiply
 import robosuite.utils.transform_utils as T
 
 
+def _site_frame_in_new_reference(sim, reference_object, reference_quat, site_name):
+    """Move a live site frame with its reference root, including articulation.
+
+    MuJoCo exposes WORLD site coordinates. Soft resets leave the previous root
+    pose in the model while the next placement is sampled. Remove that old root
+    transform before applying the newly sampled quaternion. Using site_pos alone
+    would lose drawer/other descendant-body articulation.
+    """
+    root = reference_object.root_body
+    old_position = np.asarray(sim.data.get_body_xpos(root), dtype=float)
+    old_rotation = np.asarray(sim.data.get_body_xmat(root), dtype=float).reshape(3, 3)
+    site_position = np.asarray(sim.data.get_site_xpos(site_name), dtype=float)
+    site_rotation = np.asarray(sim.data.get_site_xmat(site_name), dtype=float).reshape(3, 3)
+    new_rotation = T.quat2mat(T.convert_quat(reference_quat, to="xyzw"))
+    if (old_position.shape != (3,) or site_position.shape != (3,)
+            or not all(np.isfinite(x).all() for x in
+                       (old_position, old_rotation, site_position, site_rotation, new_rotation))):
+        raise ValueError("Site/reference transforms must be finite")
+    relative_rotation = new_rotation @ old_rotation.T
+    return relative_rotation @ (site_position - old_position), relative_rotation @ site_rotation
+
+
 class MultiRegionRandomSampler(ObjectPositionSampler):
     """
     Places all objects within the table uniformly random.
@@ -413,14 +435,17 @@ class SiteRegionRandomSampler(ObjectPositionSampler):
             horizontal_radius = obj.horizontal_radius
             bottom_offset = obj.bottom_offset
             success = False
-            site_x, site_y, site_z = T.quat2mat(
-                T.convert_quat(ref_quat, to="xyzw")
-            ) @ sim.data.get_site_xpos(site_name)
+            site_offset, site_rotation = _site_frame_in_new_reference(
+                sim, ref_obj, ref_quat, site_name
+            )
             for i in range(5000):  # 5000 retries
                 self.idx = np.random.randint(self.num_ranges)
-                object_x = self._sample_x(horizontal_radius) + base_offset[0] + site_x
-                object_y = self._sample_y(horizontal_radius) + base_offset[1] + site_y
-                object_z = self.z_offset + base_offset[2] + site_z
+                # Region x/y ranges belong to the site frame, not world axes.
+                offset = site_offset + site_rotation @ np.array(
+                    [self._sample_x(horizontal_radius), self._sample_y(horizontal_radius), 0.0]
+                )
+                object_x, object_y, object_z = base_offset + offset
+                object_z += self.z_offset
                 if on_top:
                     object_z -= bottom_offset[-1]
 
@@ -620,14 +645,17 @@ class InSiteRegionRandomSampler(SiteRegionRandomSampler):
             horizontal_radius = obj.horizontal_radius
             bottom_offset = obj.bottom_offset
             success = False
-            site_x, site_y, site_z = T.quat2mat(
-                T.convert_quat(ref_quat, to="xyzw")
-            ) @ sim.data.get_site_xpos(site_name)
+            site_offset, site_rotation = _site_frame_in_new_reference(
+                sim, ref_obj, ref_quat, site_name
+            )
             for i in range(5000):  # 5000 retries
                 self.idx = np.random.randint(self.num_ranges)
-                object_x = self._sample_x(0) + base_offset[0] + site_x
-                object_y = self._sample_y(0) + base_offset[1] + site_y
-                object_z = self.z_offset + base_offset[2] + site_z
+                # Region x/y ranges belong to the site frame, not world axes.
+                offset = site_offset + site_rotation @ np.array(
+                    [self._sample_x(0), self._sample_y(0), 0.0]
+                )
+                object_x, object_y, object_z = base_offset + offset
+                object_z += self.z_offset
                 if on_top:
                     object_z -= bottom_offset[-1]
 
