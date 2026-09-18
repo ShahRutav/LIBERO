@@ -46,14 +46,17 @@ def sim_at(old_position, old_rotation, local_site, local_rotation=np.eye(3)):
 
 
 @pytest.mark.parametrize('name', ['SiteRegionRandomSampler', 'InSiteRegionRandomSampler'])
+@pytest.mark.parametrize('pitched', [False, True])
+@pytest.mark.parametrize('on_top', [False, True])
 @pytest.mark.parametrize('old_position,old_yaw', [(np.zeros(3), 0.), (np.array([.3, -.2, .9]), 1.2),
                                                (np.array([-.1, .4, 1.1]), -2.)])
-def test_site_placement_independent_of_previous_root_pose(name, old_position, old_yaw):
+def test_site_placement_independent_of_previous_root_pose(name, old_position, old_yaw, pitched, on_top):
     functions = load_methods()
     # Descendant drawer offset is already included in current site kinematics;
     # using raw model.site_pos would miss this translated, rotated child frame.
     drawer_offset = np.array([.12, -.04, .2])
-    child_rotation = rotation(.4)
+    child_rotation = (np.array([[0., 0., 1.], [0., 1., 0.], [-1., 0., 0.]])
+                      if pitched else rotation(.4))
     site_local_in_child = np.array([.01, .02, .03])
     site_in_root = drawer_offset + child_rotation @ site_local_in_child
     sim = sim_at(old_position, rotation(old_yaw), site_in_root, child_rotation)
@@ -66,10 +69,10 @@ def test_site_placement_independent_of_previous_root_pose(name, old_position, ol
     quat = np.array([np.cos(new_yaw/2), 0., 0., np.sin(new_yaw/2)])
     new_position = np.array([-.2, .1, .85])
     fixtures = {'cabinet': (new_position.copy(), quat, reference)}
-    result = functions[name](sample, sim, fixtures, reference='cabinet', site_name='drawer_site')
+    result = functions[name](sample, sim, fixtures, reference='cabinet', site_name='drawer_site', on_top=on_top)
     expected = new_position + rotation(new_yaw) @ (site_in_root + child_rotation @ np.array([.03, -.01, 0.]))
     # Preserve existing vertical clearance/top-offset conventions intentionally.
-    expected[2] += .005 + .02 + (.045 if name == 'SiteRegionRandomSampler' else 0)
+    expected[2] += .005 + (.02 if on_top else 0) + (.045 if on_top and name == 'SiteRegionRandomSampler' else 0)
     np.testing.assert_allclose(result['bowl'][0], expected, atol=1e-12)
     np.testing.assert_array_equal(fixtures['cabinet'][0], new_position)
 
