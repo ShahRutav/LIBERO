@@ -77,12 +77,19 @@ class BDDLBaseDomain(SingleArmEnv):
         scene_properties={},
         backend="mujoco",
         mjlab_device="cuda:0",
+        placement_height_mode="legacy",
+        placement_height_clearance=0.001,
         **kwargs,
     ):
         if backend not in {"mujoco", "mjlab"}:
             raise ValueError(f"Unknown simulation backend: {backend}")
         from libero.libero.envs.robosuite_compat import install_controller_compat
         install_controller_compat()
+        from libero.libero.envs.regions.collision_bounds import validate_height_policy
+        validate_height_policy(placement_height_mode, placement_height_clearance)
+        self.placement_height_mode = placement_height_mode
+        self.placement_height_clearance = placement_height_clearance
+        self.placement_height_report = None
         self.backend = backend
         self.mjlab_device = mjlab_device
         t0 = time.time()
@@ -791,6 +798,17 @@ class BDDLBaseDomain(SingleArmEnv):
                     object_placements
                 )
             )
+            from libero.libero.envs.regions.collision_bounds import (
+                correct_on_placements, validate_height_policy,
+            )
+            validate_height_policy(self.placement_height_mode, self.placement_height_clearance)
+            self.placement_height_report = None
+            if self.placement_height_mode == "collision_bounds":
+                object_placements, self.placement_height_report = correct_on_placements(
+                    self.sim, object_placements, self.parsed_problem["initial_state"],
+                    self.parsed_problem["regions"], self.objects_dict, self.fixtures_dict,
+                    self.workspace_offset[2], clearance=self.placement_height_clearance,
+                )
             for obj_pos, obj_quat, obj in object_placements.values():
                 if obj.name not in list(self.fixtures_dict.keys()):
                     # This is for movable object resetting
