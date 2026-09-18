@@ -115,3 +115,18 @@ def test_cycles_missing_support_and_unsupported_geom_fail(monkeypatch):
 @pytest.mark.parametrize('mode,clearance',[('bad',.001),('collision_bounds',-1),('legacy',float('nan')),('legacy',True)])
 def test_invalid_policy(mode,clearance):
     with pytest.raises(ValueError):cb.validate_height_policy(mode,clearance)
+
+
+def test_mixed_site_child_of_corrected_support_fails():
+    with pytest.raises(ValueError,match='Site/In child'):
+        cb.correct_on_placements(None,{},[('on','base','table_region'),('in','child','base_site')],
+            {'table_region':{'target':'table'},'base_site':{'target':'base'}},['base','child'],[],.9)
+
+
+def test_explicit_pair_activates_zero_mask_collision_geom():
+    sim=fake_sim()
+    model=sim.model._model
+    model.geom_contype[0]=model.geom_conaffinity[0]=0
+    model.pair_geom1=np.array([0]); model.pair_geom2=np.array([0])
+    low,high,ids=cb.object_vertical_bounds(sim,NS(name='object',root_body='root'),IDENTITY)
+    assert ids==[0] and (low,high)==pytest.approx((-.26,.34))

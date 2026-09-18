@@ -134,6 +134,11 @@ def correct_on_placements(sim, placements, initial_state, regions, movable_names
         if child in relations:
             raise ValueError(f'Multiple On support relations for {child}')
         relations[child] = support
+    for item in unchanged:
+        target = item['relation'][2]
+        support = regions[target]['target'] if target in regions else target
+        if support in relations:
+            raise ValueError('Site/In child of a corrected movable support is unsupported')
     corrected = dict(placements)
     corrected_bounds, corrections, pending = {}, [], dict(relations)
 
