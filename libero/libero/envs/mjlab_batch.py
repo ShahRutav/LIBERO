@@ -24,13 +24,22 @@ class LiberoBatchEnv:
 
     @torch.inference_mode(False)
     def __init__(self, env, initial_states, num_envs, device="cuda:0", horizon=500, seed=0,
-                 initial_body_pos=None, initial_body_quat=None):
+                 initial_body_pos=None, initial_body_quat=None, *, stepping_mode="full"):
         import mujoco
         import warp as wp
         from mjlab.sim import Simulation, SimulationCfg
         from .mjlab_sim import _PreserveOptions
         if num_envs < 1 or horizon < 1:
             raise ValueError("num_envs and horizon must be positive")
+        if stepping_mode not in ("full", "split"):
+            raise ValueError("stepping_mode must be 'full' or 'split'")
+        self.stepping_mode = stepping_mode
+        if stepping_mode == "split":
+            from .mjlab_split_step import SplitStepSimulation
+            Simulation = SplitStepSimulation
+            if (abs(env.env.control_timestep - .05) > 1e-12 or
+                    abs(env.env.model_timestep - .002) > 1e-12):
+                raise ValueError("Split stepping requires 20 Hz control and physics dt=.002")
         self.env, self.model = env, env.sim.model._model
         self.num_envs, self.device, self.horizon = num_envs, torch.device(device), horizon
         self.initial_states = np.asarray(initial_states, dtype=np.float64)
@@ -87,6 +96,13 @@ class LiberoBatchEnv:
             self.action_spec[name] = np.asarray(getattr(native_controller, name)).tolist()
         self.action_spec["position_limits"] = (None if native_controller.position_limits is None
                                                  else np.asarray(native_controller.position_limits).tolist())
+        # Stepping mode is execution provenance, not action semantics, so it
+        # stays out of action_spec: the action schema is unchanged by splitting.
+        self.execution_spec = {"version": 1, "stepping_mode": stepping_mode,
+                               "engine_class": type(self.engine).__name__}
+        if stepping_mode == "split":
+            from .mjlab_split_step import split_stepping_spec
+            self.execution_spec["split"] = split_stepping_spec(self.model, self.substeps)
         self._goals = self._compile_goals()
         fields = [("qpos", [self.model.nq]), ("qvel", [self.model.nv]), ("act", [self.model.na])]
         for name in self.object_names:
@@ -239,9 +255,15 @@ class LiberoBatchEnv:
                 raise ValueError("Nonfinite actions")
             actions = actions.clamp(-1, 1)
             for substep in range(self.substeps):
-                self.engine.forward()
+                if self.stepping_mode == "split":
+                    self.engine.step1()
+                else:
+                    self.engine.forward()
                 self.controller.control(actions, policy_step=substep == 0)
-                self.engine.step()
+                if self.stepping_mode == "split":
+                    self.engine.step2()
+                else:
+                    self.engine.step()
             self.engine.forward()
             self.previous_action.copy_(actions)
             self.elapsed += 1
