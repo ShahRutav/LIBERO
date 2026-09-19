@@ -84,9 +84,15 @@ class SplitStepSimulation(Simulation):
         for name in ("step1", "step2"):
             if not callable(getattr(mjwarp, name, None)):
                 raise NotImplementedError(f"Installed mujoco_warp has no {name}")
+        # step1 does invoke the control callback, and step2 invokes the rest in
+        # their usual places. What is unqualified is their ordering relative to
+        # OSC, which now writes ctrl between the two halves: a control callback
+        # would run before OSC every substep instead of after it. Reject until
+        # that ordering is qualified rather than silently changing it.
         active = [name for name, value in vars(self.wp_model.callback).items() if value is not None]
         if active:
-            raise NotImplementedError(f"LIBERO split stepping does not support callbacks: {active}")
+            raise NotImplementedError(
+                f"LIBERO split stepping has not qualified callback ordering around OSC: {active}")
         if abs(float(self.mj_model.opt.timestep) - .002) > 1e-12:
             raise ValueError("LIBERO split stepping requires physics dt=.002")
 
