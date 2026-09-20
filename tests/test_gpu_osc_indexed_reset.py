@@ -4,14 +4,19 @@ from pathlib import Path
 from types import SimpleNamespace
 import unittest
 
-import torch
+try:
+    import torch
+except ImportError:
+    torch = None
 
-spec = importlib.util.spec_from_file_location("standalone_gpu_osc", Path(__file__).parents[1] / "libero/libero/envs/gpu_osc.py")
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-GPUOSC = module.GPUOSC
+if torch is not None:
+    spec = importlib.util.spec_from_file_location("standalone_gpu_osc", Path(__file__).parents[1] / "libero/libero/envs/gpu_osc.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    GPUOSC = module.GPUOSC
 
 
+@unittest.skipIf(torch is None, "torch unavailable")
 class IndexedResetTest(unittest.TestCase):
     def controller(self):
         c = GPUOSC.__new__(GPUOSC)
@@ -20,6 +25,7 @@ class IndexedResetTest(unittest.TestCase):
         c.goal_pos = torch.full((4, 3), -7., dtype=c.dtype)
         c.goal_ori = torch.full((4, 3, 3), -8., dtype=c.dtype)
         c.grip = torch.full((4, 2), .5, dtype=c.dtype)
+        c.invalid_controller = torch.tensor([True, True, False, True])
         c.engine = SimpleNamespace(data=SimpleNamespace(
             site_xpos=torch.arange(12).reshape(4, 1, 3).float(),
             site_xmat=torch.eye(3).expand(4, 1, 3, 3)))
@@ -32,6 +38,7 @@ class IndexedResetTest(unittest.TestCase):
         torch.testing.assert_close(c.goal_pos[[0, 2]], torch.full((2, 3), -7., dtype=c.dtype))
         torch.testing.assert_close(c.grip[[3, 1]], torch.zeros((2, 2), dtype=c.dtype))
         torch.testing.assert_close(c.grip[[0, 2]], torch.full((2, 2), .5, dtype=c.dtype))
+        torch.testing.assert_close(c.invalid_controller, torch.tensor([True, False, False, False]))
 
     def test_prefix_controller_memory_can_be_restored(self):
         c = self.controller()

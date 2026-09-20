@@ -269,11 +269,12 @@ class LiberoBatchEnv:
             self.elapsed += 1
             obs = self._observe()
             finite = torch.isfinite(obs).all(-1)
-            success = self._success() & finite
-            terminated = success | ~finite
+            invalid = ~finite | self.controller.invalid_controller
+            success = self._success() & ~invalid
+            terminated = success | invalid
             truncated = (self.elapsed >= self.horizon) & ~terminated
             self.done.copy_(terminated | truncated)
-            return obs, success.float(), terminated, truncated, {"success": success, "invalid_state": ~finite}
+            return obs, success.float(), terminated, truncated, {"success": success, "invalid_state": invalid}
 
     def restore_recorded_state(self, raw_state, previous_action=None):
         """Teacher-forced reference state with action-prefix controller memory."""

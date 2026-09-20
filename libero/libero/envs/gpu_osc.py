@@ -69,9 +69,11 @@ class GPUOSC:
                 self.goal_pos = torch.empty((n, 3), device=self.device, dtype=self.dtype)
                 self.goal_ori = torch.empty((n, 3, 3), device=self.device, dtype=self.dtype)
                 self.grip = torch.empty((n, 2), device=self.device, dtype=self.dtype)
+                self.invalid_controller = torch.zeros(n, device=self.device, dtype=torch.bool)
             self.goal_pos.copy_(self.tensor(controller.goal_pos).expand(n, -1))
             self.goal_ori.copy_(self.tensor(controller.goal_ori).expand(n, -1, -1))
             self.grip.zero_()
+            self.invalid_controller.zero_()
 
     @torch.no_grad()
     def reset_indices(self, env_ids, goal_pos=None, goal_ori=None, grip=None):
@@ -82,6 +84,7 @@ class GPUOSC:
         self.goal_ori[env_ids] = (d.site_xmat[env_ids, self.site].reshape(-1, 3, 3).to(self.dtype)
                                  if goal_ori is None else torch.as_tensor(goal_ori, device=self.goal_ori.device, dtype=self.dtype))
         self.grip[env_ids] = 0 if grip is None else torch.as_tensor(grip, device=self.grip.device, dtype=self.dtype)
+        self.invalid_controller[env_ids] = False
 
     def state(self):
         d = self.engine.data
@@ -138,19 +141,40 @@ class GPUOSC:
         error_ori = 0.5 * torch.linalg.cross(ori.transpose(1,2),self.goal_ori.transpose(1,2),dim=-1).sum(1)
         desired = torch.cat((self.goal_pos-pos,error_ori),-1)*self.kp - (jac@v[:,:,None]).squeeze(-1)*self.kd
         # Match np.linalg.pinv default rcond=1e-15, including singular cases.
-        minv = torch.linalg.inv(mass)
+        finite_state = (
+            torch.isfinite(pos).all(-1) & torch.isfinite(ori).all((-2, -1)) &
+            torch.isfinite(jac).all((-2, -1)) & torch.isfinite(mass).all((-2, -1)) &
+            torch.isfinite(q).all(-1) & torch.isfinite(v).all(-1) &
+            torch.isfinite(bias).all(-1) & torch.isfinite(desired).all(-1)
+        )
+        # inv_ex reports a singular world without aborting healthy worlds.
+        # Substitution is confined to temporary controller math: simulator
+        # qpos/qvel and contact integration remain untouched.
+        safe_mass = torch.where(finite_state[:, None, None], mass, self.eye)
+        minv, info = torch.linalg.inv_ex(safe_mass, check_errors=False)
+        valid = finite_state & (info == 0) & torch.isfinite(minv).all((-2, -1))
         jt = jac.transpose(1,2)
         linv = jac@minv@jt
-        lam = torch.linalg.pinv(linv,rtol=1e-15)
+        valid &= torch.isfinite(linv).all((-2, -1))
+        task_eye = torch.eye(linv.shape[-1], dtype=self.dtype, device=self.device)
+        safe_linv = torch.where(valid[:, None, None], linv, task_eye)
+        lam = torch.linalg.pinv(safe_linv,rtol=1e-15)
         if self.uncoupling:
-            wrench = torch.cat((torch.linalg.pinv(linv[:,:3,:3],rtol=1e-15)@desired[:,:3,None],
-                                 torch.linalg.pinv(linv[:,3:,3:],rtol=1e-15)@desired[:,3:,None]),1)
+            wrench = torch.cat((torch.linalg.pinv(safe_linv[:,:3,:3],rtol=1e-15)@desired[:,:3,None],
+                                 torch.linalg.pinv(safe_linv[:,3:,3:],rtol=1e-15)@desired[:,3:,None]),1)
         else:
             wrench = lam@desired[:,:,None]
         null = self.eye - minv@jt@lam@jac
         pose_torque = mass@(10*(self.initial_joint-q)-2*np.sqrt(10)*v)[:,:,None]
         torques = (jt@wrench + null.transpose(1,2)@pose_torque).squeeze(-1)+bias
+        valid &= torch.isfinite(torques).all(-1)
+        failed = ~valid
+        self.invalid_controller |= failed
         self.engine.data.ctrl[:,self.aids] = torques.clamp(self.low,self.high).float()
         self.grip.copy_((self.grip + self.grip_delta*torch.sign(action[:,6:7])).clamp(-1,1))
         self.engine.data.ctrl[:,self.gids] = (self.grip_bias+self.grip_weight*self.grip).float()
+        actuator_ids = torch.cat((self.aids, self.gids))
+        controls = self.engine.data.ctrl[:, actuator_ids]
+        self.engine.data.ctrl[:, actuator_ids] = torch.where(
+            self.invalid_controller[:, None], 0, controls)
         return torques
