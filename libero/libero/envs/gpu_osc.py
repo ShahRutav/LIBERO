@@ -54,6 +54,8 @@ class GPUOSC:
         self.grip_delta = self.tensor([-1,1]) * robot.gripper.speed
         self.position_limits = None if c.position_limits is None else self.tensor(c.position_limits)
         self.eye = torch.eye(len(c.qvel_index), dtype=self.dtype, device=self.device)
+        self.task_eye = torch.eye(6, dtype=self.dtype, device=self.device)
+        self.actuator_ids = torch.cat((self.aids, self.gids))
         self.reset(c)
 
     def tensor(self, x):
@@ -131,6 +133,24 @@ class GPUOSC:
             self.grip.copy_((self.grip + self.grip_delta*torch.sign(action[:, 6:7])).clamp(-1, 1))
         self.engine.data.ctrl[:, self.gids] = (self.grip_bias+self.grip_weight*self.grip).float()
 
+    def _pinv(self, matrices):
+        """Use the batched fast path, isolating only SVD convergence failures."""
+        try:
+            return torch.linalg.pinv(matrices, rtol=1e-15), torch.zeros(
+                len(matrices), dtype=torch.bool, device=self.device)
+        except torch.linalg.LinAlgError:
+            inverses = torch.empty_like(matrices)
+            failed = torch.zeros(len(matrices), dtype=torch.bool, device=self.device)
+            identity = torch.eye(
+                matrices.shape[-1], dtype=matrices.dtype, device=matrices.device)
+            for world in range(len(matrices)):
+                try:
+                    inverses[world] = torch.linalg.pinv(matrices[world], rtol=1e-15)
+                except torch.linalg.LinAlgError:
+                    inverses[world] = identity
+                    failed[world] = True
+            return inverses, failed
+
     @torch.no_grad()
     def control(self, action, policy_step):
         pos, ori, jac, mass, q, v, bias = self.state()
@@ -147,24 +167,34 @@ class GPUOSC:
             torch.isfinite(q).all(-1) & torch.isfinite(v).all(-1) &
             torch.isfinite(bias).all(-1) & torch.isfinite(desired).all(-1)
         )
+        valid = finite_state & ~self.invalid_controller
         # inv_ex reports a singular world without aborting healthy worlds.
         # Substitution is confined to temporary controller math: simulator
         # qpos/qvel and contact integration remain untouched.
-        safe_mass = torch.where(finite_state[:, None, None], mass, self.eye)
+        safe_mass = torch.where(valid[:, None, None], mass, self.eye)
         minv, info = torch.linalg.inv_ex(safe_mass, check_errors=False)
-        valid = finite_state & (info == 0) & torch.isfinite(minv).all((-2, -1))
-        jt = jac.transpose(1,2)
-        linv = jac@minv@jt
+        valid &= (info == 0) & torch.isfinite(minv).all((-2, -1))
+        minv = torch.where(valid[:, None, None], minv, self.eye)
+        safe_jac = torch.where(valid[:, None, None], jac, 0)
+        jt = safe_jac.transpose(1,2)
+        linv = safe_jac@minv@jt
         valid &= torch.isfinite(linv).all((-2, -1))
-        task_eye = torch.eye(linv.shape[-1], dtype=self.dtype, device=self.device)
-        safe_linv = torch.where(valid[:, None, None], linv, task_eye)
-        lam = torch.linalg.pinv(safe_linv,rtol=1e-15)
+        safe_linv = torch.where(valid[:, None, None], linv, self.task_eye)
+        lam, pinv_failed = self._pinv(safe_linv)
+        valid &= ~pinv_failed
         if self.uncoupling:
-            wrench = torch.cat((torch.linalg.pinv(safe_linv[:,:3,:3],rtol=1e-15)@desired[:,:3,None],
-                                 torch.linalg.pinv(safe_linv[:,3:,3:],rtol=1e-15)@desired[:,3:,None]),1)
+            safe_linv = torch.where(valid[:, None, None], safe_linv, self.task_eye)
+            lin_lam, lin_failed = self._pinv(safe_linv[:,:3,:3])
+            valid &= ~lin_failed
+            safe_rot_linv = torch.where(
+                valid[:, None, None], safe_linv[:,3:,3:], self.task_eye[:3,:3])
+            rot_lam, rot_failed = self._pinv(safe_rot_linv)
+            valid &= ~rot_failed
+            wrench = torch.cat((lin_lam@desired[:,:3,None],
+                                 rot_lam@desired[:,3:,None]),1)
         else:
             wrench = lam@desired[:,:,None]
-        null = self.eye - minv@jt@lam@jac
+        null = self.eye - minv@jt@lam@safe_jac
         pose_torque = mass@(10*(self.initial_joint-q)-2*np.sqrt(10)*v)[:,:,None]
         torques = (jt@wrench + null.transpose(1,2)@pose_torque).squeeze(-1)+bias
         valid &= torch.isfinite(torques).all(-1)
@@ -173,8 +203,7 @@ class GPUOSC:
         self.engine.data.ctrl[:,self.aids] = torques.clamp(self.low,self.high).float()
         self.grip.copy_((self.grip + self.grip_delta*torch.sign(action[:,6:7])).clamp(-1,1))
         self.engine.data.ctrl[:,self.gids] = (self.grip_bias+self.grip_weight*self.grip).float()
-        actuator_ids = torch.cat((self.aids, self.gids))
-        controls = self.engine.data.ctrl[:, actuator_ids]
-        self.engine.data.ctrl[:, actuator_ids] = torch.where(
+        controls = self.engine.data.ctrl[:, self.actuator_ids]
+        self.engine.data.ctrl[:, self.actuator_ids] = torch.where(
             self.invalid_controller[:, None], 0, controls)
         return torques

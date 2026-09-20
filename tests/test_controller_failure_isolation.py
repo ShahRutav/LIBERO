@@ -5,6 +5,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 import sys
 import unittest
+from unittest.mock import patch
 
 try:
     import torch
@@ -57,6 +58,7 @@ class ControllerFailureIsolationTest(unittest.TestCase):
         c.dtype = torch.float64
         c.device = torch.device("cpu")
         c.eye = torch.eye(dofs, dtype=c.dtype)
+        c.task_eye = torch.eye(6, dtype=c.dtype)
         c.uncoupling = False
         c.kp = torch.arange(1, 7, dtype=c.dtype)
         c.kd = torch.arange(7, 13, dtype=c.dtype) / 10
@@ -65,6 +67,7 @@ class ControllerFailureIsolationTest(unittest.TestCase):
         c.high = torch.full((dofs,), 100., dtype=c.dtype)
         c.aids = torch.arange(dofs)
         c.gids = torch.tensor([dofs, dofs + 1])
+        c.actuator_ids = torch.cat((c.aids, c.gids))
         c.grip = torch.zeros((worlds, 2), dtype=c.dtype)
         c.grip_delta = torch.tensor([-.01, .01], dtype=c.dtype)
         c.grip_bias = torch.zeros(2, dtype=c.dtype)
@@ -137,6 +140,69 @@ class ControllerFailureIsolationTest(unittest.TestCase):
         self.assertEqual(c.invalid_controller.tolist(), [True, False, False])
         c.reset_indices(torch.tensor([0]))
         self.assertEqual(c.invalid_controller.tolist(), [False, False, False])
+
+    def test_pinv_linalg_error_retries_per_world_and_isolates_failure(self):
+        mass = torch.eye(7, dtype=torch.float64).expand(3, -1, -1).clone()
+        action = torch.zeros(3, 7, dtype=torch.float64)
+        c = self.controller(mass)
+        state = c.state()
+        healthy = torch.tensor([0, 2])
+        reference = self.controller(mass[healthy])
+        reference.goal_pos = c.goal_pos[healthy].clone()
+        reference.goal_ori = c.goal_ori[healthy].clone()
+        expected = self.original_controls(
+            reference, tuple(value[healthy] for value in state), action[healthy])
+        real_pinv = torch.linalg.pinv
+        per_world_calls = 0
+
+        def failing_pinv(matrix, *args, **kwargs):
+            nonlocal per_world_calls
+            if matrix.ndim == 3:
+                raise torch.linalg.LinAlgError("batched SVD did not converge")
+            per_world_calls += 1
+            if per_world_calls == 2:
+                raise torch.linalg.LinAlgError("world SVD did not converge")
+            return real_pinv(matrix, *args, **kwargs)
+
+        with patch.object(torch.linalg, "pinv", side_effect=failing_pinv):
+            c.control(action, policy_step=False)
+
+        self.assertEqual(c.invalid_controller.tolist(), [False, True, False])
+        self.assertEqual(per_world_calls, 3)
+        torch.testing.assert_close(c.engine.data.ctrl[1], torch.zeros(9))
+        torch.testing.assert_close(
+            c.engine.data.ctrl[healthy], expected, rtol=1e-12, atol=1e-12)
+
+    def test_latched_world_uses_benign_matrices_before_linalg(self):
+        mass = torch.eye(7, dtype=torch.float64).expand(3, -1, -1).clone()
+        mass[1].fill_(37)
+        c = self.controller(mass)
+        c.invalid_controller[1] = True
+        real_inv_ex, real_pinv = torch.linalg.inv_ex, torch.linalg.pinv
+        seen = {}
+
+        def recording_inv_ex(matrix, *args, **kwargs):
+            seen["mass"] = matrix.clone()
+            return real_inv_ex(matrix, *args, **kwargs)
+
+        def recording_pinv(matrix, *args, **kwargs):
+            seen["task"] = matrix.clone()
+            return real_pinv(matrix, *args, **kwargs)
+
+        with patch.object(torch.linalg, "inv_ex", side_effect=recording_inv_ex), \
+                patch.object(torch.linalg, "pinv", side_effect=recording_pinv):
+            c.control(torch.zeros(3, 7, dtype=torch.float64), policy_step=False)
+
+        torch.testing.assert_close(seen["mass"][1], c.eye)
+        torch.testing.assert_close(seen["task"][1], c.task_eye)
+        self.assertTrue(c.invalid_controller[1])
+        torch.testing.assert_close(c.engine.data.ctrl[1], torch.zeros(9))
+
+    def test_unrelated_pinv_runtime_error_propagates(self):
+        c = self.controller(torch.eye(7, dtype=torch.float64)[None])
+        with patch.object(torch.linalg, "pinv", side_effect=RuntimeError("infrastructure")), \
+                self.assertRaisesRegex(RuntimeError, "infrastructure"):
+            c.control(torch.zeros(1, 7, dtype=torch.float64), policy_step=False)
 
 
 @unittest.skipIf(torch is None, "torch unavailable")
