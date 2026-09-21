@@ -82,6 +82,10 @@ def predicate_parity(batch, *, diagnostics_path=None, context=None, raise_on_mis
     may collect those mismatches explicitly; logical disagreement on identical
     GPU contacts and positions always raises. Default remains strict.
     """
+    if getattr(batch, '_predicate_program', None) is not None:
+        from libero.libero.envs.mjlab_predicate_audit import predicate_parity as general_parity
+        return general_parity(batch, diagnostics_path=diagnostics_path, context=context,
+                              raise_on_mismatch=raise_on_mismatch)
     import mujoco
     import warp as wp
     from robosuite.utils.binding_utils import MjSim

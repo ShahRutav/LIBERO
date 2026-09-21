@@ -130,6 +130,14 @@ class LiberoBatchEnv:
         caller.wait_stream(self.stream)
 
     def _compile_goals(self):
+        self._predicate_program = None
+        states = self.env.env.object_states_dict
+        original = self.env.env.parsed_problem['goal_state']
+        if any(len(g) != 3 or g[0].lower() != 'on'
+               or any(states[n].object_state_type != 'object' for n in g[1:]) for g in original):
+            from .mjlab_predicates import compile_program
+            self._predicate_program = compile_program(self)
+            return []
         goals = []
         for goal in self.env.env.parsed_problem["goal_state"]:
             if len(goal) != 3 or goal[0].lower() != "on":
@@ -146,9 +154,13 @@ class LiberoBatchEnv:
             goals.append((self.env.env.obj_body_id[top], self.env.env.obj_body_id[bottom], *geoms))
         if not goals:
             raise ValueError("Task has no supported goal")
+        self.goal_body_ids = sorted({int(body) for g in goals for body in g[:2]})
         return goals
 
     def _success(self):
+        if getattr(self, '_predicate_program', None) is not None:
+            from .mjlab_predicates import success
+            return success(self)
         import warp as wp
         contact = self.engine.wp_data.contact
         geom = wp.to_torch(contact.geom).long()
