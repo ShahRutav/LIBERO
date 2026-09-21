@@ -14,6 +14,16 @@ spec.loader.exec_module(cb)
 IDENTITY = [1., 0., 0., 0.]
 
 
+def test_backend_defaults_and_explicit_height_overrides():
+    assert cb.resolve_height_policy('mjlab') == ('collision_bounds', .004)
+    assert cb.resolve_height_policy('mujoco') == ('legacy', .001)
+    assert cb.resolve_height_policy('mjlab', 'legacy', .002) == ('legacy', .002)
+    assert cb.resolve_height_policy('mujoco', 'collision_bounds', .004) == ('collision_bounds', .004)
+    assert cb.resolve_height_policy('mjlab', clearance=.006) == ('collision_bounds', .006)
+    with pytest.raises(ValueError):
+        cb.resolve_height_policy('mjlab', clearance=-1)
+
+
 def fake_sim(kind=6, size=(.1,.2,.3), *, local=(.02,.03,.04), geom_rotation=None,
              old_position=(.5,-.4,.9), old_quaternion=IDENTITY, child=True):
     R = cb._rotation(old_quaternion)

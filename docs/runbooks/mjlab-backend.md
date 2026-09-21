@@ -1,12 +1,27 @@
 # mjlab backend
 
 Status: Active
-Last verified: 2026-09-17
+Last verified: 2026-09-21
 
 LIBERO can run its existing environments with `backend="mjlab"`. Physics steps
 run through `mjlab.sim.Simulation` and MuJoCo-Warp on one GPU. Task definitions,
 OSC actions, observations, cameras, BDDL predicates, and the public reset API
 retain their existing interfaces. The default backend remains `"mujoco"`.
+
+Fresh resets with `backend="mjlab"` default to collision-support placement
+(`placement_height_mode="collision_bounds"`) with 4 mm clearance
+(`placement_height_clearance=0.004`). Explicit arguments override these defaults.
+Native MuJoCo keeps legacy placement by default. Loading recorded demonstration
+states or injecting a batch reset bank does not adjust those saved states;
+native-generated banks must request this policy explicitly when sampling.
+
+Fixture geometry refresh is automatic when batch resets inject fixture poses.
+The pinned MuJoCo-Warp revision below includes both the regularization floor
+correction and normalized tangential Newton curvature, avoiding a separately
+floored `T³` denominator in dense and sparse Hessians. These defaults do not
+change the solver selection or contact dimensions. The combined qualification
+had zero numerical failures in 10,000 resets, but four NaNs in 5,000 Newton
+demo replays; general Newton training remains unqualified.
 
 ## Install and run
 

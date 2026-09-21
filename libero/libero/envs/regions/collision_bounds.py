@@ -1,4 +1,4 @@
-"""Opt-in, geometry-derived vertical placement for native ``On`` resets.
+"""Geometry-derived vertical placement for freshly sampled ``On`` resets.
 
 Only movable-object On(workspace) and On(object) heights are corrected. Site/In
 placements retain their established articulated-site sampler. Bounds are a
@@ -10,6 +10,18 @@ import math
 from types import SimpleNamespace
 
 import numpy as np
+
+
+def resolve_height_policy(backend, mode=None, clearance=None):
+    """Use qualified mjlab defaults while preserving native and explicit policies."""
+    if backend not in ('mujoco', 'mjlab'):
+        raise ValueError('Unknown simulation backend')
+    if mode is None:
+        mode = 'collision_bounds' if backend == 'mjlab' else 'legacy'
+    if clearance is None:
+        clearance = 0.004 if backend == 'mjlab' else 0.001
+    validate_height_policy(mode, clearance)
+    return mode, clearance
 
 
 def validate_height_policy(mode, clearance):

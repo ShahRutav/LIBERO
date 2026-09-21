@@ -77,16 +77,17 @@ class BDDLBaseDomain(SingleArmEnv):
         scene_properties={},
         backend="mujoco",
         mjlab_device="cuda:0",
-        placement_height_mode="legacy",
-        placement_height_clearance=0.001,
+        placement_height_mode=None,
+        placement_height_clearance=None,
         **kwargs,
     ):
         if backend not in {"mujoco", "mjlab"}:
             raise ValueError(f"Unknown simulation backend: {backend}")
         from libero.libero.envs.robosuite_compat import install_controller_compat
         install_controller_compat()
-        from libero.libero.envs.regions.collision_bounds import validate_height_policy
-        validate_height_policy(placement_height_mode, placement_height_clearance)
+        from libero.libero.envs.regions.collision_bounds import resolve_height_policy
+        placement_height_mode, placement_height_clearance = resolve_height_policy(
+            backend, placement_height_mode, placement_height_clearance)
         self.placement_height_mode = placement_height_mode
         self.placement_height_clearance = placement_height_clearance
         self.placement_height_report = None
