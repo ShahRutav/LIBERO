@@ -24,7 +24,8 @@ class LiberoBatchEnv:
 
     @torch.inference_mode(False)
     def __init__(self, env, initial_states, num_envs, device="cuda:0", horizon=500, seed=0,
-                 initial_body_pos=None, initial_body_quat=None, *, stepping_mode="full"):
+                 initial_body_pos=None, initial_body_quat=None, *, stepping_mode="full",
+                 nconmax=None, njmax=None):
         from .mujoco_warp_pin import verify
         verify()
         import mujoco
@@ -35,6 +36,9 @@ class LiberoBatchEnv:
             raise ValueError("num_envs and horizon must be positive")
         if stepping_mode not in ("full", "split"):
             raise ValueError("stepping_mode must be 'full' or 'split'")
+        for name, value in (("nconmax", nconmax), ("njmax", njmax)):
+            if value is not None and (type(value) is not int or value < 1):
+                raise ValueError(f"{name} must be a positive integer or None")
         self.stepping_mode = stepping_mode
         if stepping_mode == "split":
             from .mjlab_split_step import SplitStepSimulation
@@ -50,7 +54,10 @@ class LiberoBatchEnv:
             raise ValueError(f"Expected nonempty reset states [S,{width}]")
         if not np.isfinite(self.initial_states).all():
             raise ValueError("Nonfinite reset states")
-        self.engine = Simulation(num_envs, SimulationCfg(mujoco=_PreserveOptions()), model=self.model, device=str(device))
+        capacity = {name: value for name, value in (("nconmax", nconmax), ("njmax", njmax))
+                    if value is not None}
+        self.engine = Simulation(num_envs, SimulationCfg(mujoco=_PreserveOptions(), **capacity),
+                                 model=self.model, device=str(device))
         if (initial_body_pos is None) != (initial_body_quat is None):
             raise ValueError("Both body pose banks are required")
         self._body_pose_banks = {}
@@ -102,6 +109,8 @@ class LiberoBatchEnv:
         # stays out of action_spec: the action schema is unchanged by splitting.
         self.execution_spec = {"version": 1, "stepping_mode": stepping_mode,
                                "engine_class": type(self.engine).__name__}
+        if capacity:
+            self.execution_spec["capacity"] = capacity
         if stepping_mode == "split":
             from .mjlab_split_step import split_stepping_spec
             self.execution_spec["split"] = split_stepping_spec(self.model, self.substeps)
