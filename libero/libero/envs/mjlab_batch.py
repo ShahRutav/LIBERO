@@ -175,6 +175,9 @@ class LiberoBatchEnv:
         d.qvel[ids] = states[:, 1+m.nq:1+m.nq+m.nv].to(d.qvel.dtype)
         if m.na:
             d.act[ids] = states[:, -m.na:].to(d.act.dtype)
+        if self._body_pose_banks:
+            from .mjlab_fixture_geometry import refresh_static_fixture_geometry
+            refresh_static_fixture_geometry(self.engine, ids)
         self.engine.forward()
 
     def set_reset_bank(self, initial_states, initial_body_pos=None, initial_body_quat=None):
