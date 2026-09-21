@@ -11,6 +11,7 @@ import numpy as np
 import torch
 
 from .gpu_osc import GPUOSC
+from .mjlab_seed import make_simulation_from_reset_seed
 
 
 def schema_hash(spec):
@@ -56,8 +57,9 @@ class LiberoBatchEnv:
             raise ValueError("Nonfinite reset states")
         capacity = {name: value for name, value in (("nconmax", nconmax), ("njmax", njmax))
                     if value is not None}
-        self.engine = Simulation(num_envs, SimulationCfg(mujoco=_PreserveOptions(), **capacity),
-                                 model=self.model, device=str(device))
+        self.engine = make_simulation_from_reset_seed(
+            Simulation, SimulationCfg(mujoco=_PreserveOptions(), **capacity), self.model,
+            self.initial_states[0], num_envs, device)
         import mujoco_warp as mjw
         self._wp = wp
         self._capacity_overflow_mask = ~(int(mjw.OverflowType.ITERATIONS)
