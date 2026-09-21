@@ -14,12 +14,14 @@ spec.loader.exec_module(module)
 
 
 class PinTest(unittest.TestCase):
-    def verify(self, origin, data=b'tested source'):
+    def verify(self, origin, data=b'tested source', solver_data=None):
         dist = SimpleNamespace(
             read_text=lambda _: json.dumps(origin) if origin else None,
-            locate_file=lambda _: SimpleNamespace(read_bytes=lambda: data))
+            locate_file=lambda name: SimpleNamespace(read_bytes=lambda:
+                solver_data if name.endswith('/solver.py') and solver_data is not None else data))
         with patch.object(module.metadata, 'distribution', return_value=dist), \
-             patch.object(module, 'CONSTRAINT_SHA256', hashlib.sha256(b'tested source').hexdigest()):
+             patch.object(module, 'CONSTRAINT_SHA256', hashlib.sha256(b'tested source').hexdigest()), \
+             patch.object(module, 'SOLVER_SHA256', hashlib.sha256(b'tested source').hexdigest()):
             return module.verify()
 
     def test_exact_source_is_accepted(self):
@@ -33,6 +35,11 @@ class PinTest(unittest.TestCase):
     def test_modified_source_with_correct_git_metadata_is_rejected(self):
         with self.assertRaises(RuntimeError):
             self.verify({'url': module.REPOSITORY, 'vcs_info': {'commit_id': module.COMMIT}}, b'modified')
+
+    def test_modified_solver_only_is_rejected(self):
+        with self.assertRaises(RuntimeError):
+            self.verify({'url': module.REPOSITORY, 'vcs_info': {'commit_id': module.COMMIT}},
+                        solver_data=b'modified solver')
 
 
 if __name__ == '__main__':

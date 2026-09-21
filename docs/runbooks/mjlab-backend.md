@@ -47,8 +47,8 @@ PY
 ```
 
 MuJoCo-Warp is pinned to `ShahRutav/mujoco_warp`, branch
-`fix/elliptic-regularization-floor`, commit
-`cac9e68c6369a5fb9970a12118aec77c27154ffc`. Install the commit, not the
+`fix/elliptic-normalized-curvature`, commit
+`9df8bdb02acdb9e2661bcfa4a7fef265952d35d2`. Install the commit, not the
 moving branch name. The explicit override is needed because mjlab 1.6 still
 declares MuJoCo/MuJoCo-Warp 3.11 dependencies. This newer stack includes
 MuJoCo `3.12.1.dev974703000` and Warp `1.15.0`. The legacy 3.11 Newton
