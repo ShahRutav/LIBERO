@@ -130,3 +130,25 @@ def test_explicit_pair_activates_zero_mask_collision_geom():
     model.pair_geom1=np.array([0]); model.pair_geom2=np.array([0])
     low,high,ids=cb.object_vertical_bounds(sim,NS(name='object',root_body='root'),IDENTITY)
     assert ids==[0] and (low,high)==pytest.approx((-.26,.34))
+
+
+def test_workspace_top_uses_world_rotation_and_ignores_visuals():
+    sim = fake_sim(old_position=(0, 0, .41), old_quaternion=[.5, .5, .5, .5])
+    sim.data._data.xquat = np.tile([.5, .5, .5, .5], (3, 1))
+    top, geoms = cb.workspace_collision_top(sim, 'table')
+    # Rotation maps local y onto world z: center .03 + half-width .2.
+    assert top == pytest.approx(.41 + .03 + .2)
+    assert geoms == [0]
+
+
+def test_workspace_geometry_replaces_nominal_height(monkeypatch):
+    obj = NS(name='box', root_body='box')
+    monkeypatch.setattr(cb, 'workspace_collision_top', lambda *a: (.43676, [10]))
+    monkeypatch.setattr(cb, 'object_vertical_bounds', lambda *a: (-.01, .02, [20]))
+    corrected, report = cb.correct_on_placements(
+        None, {'box': ((.1, .2, .48), IDENTITY, obj)}, [('on', 'box', 'region')],
+        {'region': {'target': 'living_room_table'}}, ['box'], [], .41,
+        clearance=.004, workspace_body='living_room_table')
+    assert corrected['box'][0] == pytest.approx((.1, .2, .45076))
+    assert report['workspace']['nominal_z'] == .41
+    assert report['workspace']['collision_top_z'] == .43676

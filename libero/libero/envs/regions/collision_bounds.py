@@ -7,6 +7,7 @@ callers must still qualify settling. No mesh assets or sampled XY/rotations chan
 """
 from copy import deepcopy
 import math
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -99,8 +100,21 @@ def object_vertical_bounds(sim, obj, quaternion):
     return min(x[0] for x in bounds), max(x[1] for x in bounds), geom_ids
 
 
+def workspace_collision_top(sim, body_name):
+    """World-space top of a finite table's collision envelope, excluding visuals.
+
+    Use the arena body, not its nominal sampling offset. This assumes a table
+    support envelope; it is not a general height-field or concave-site query.
+    """
+    root = sim.model.body_name2id(body_name)
+    data = sim.data._data
+    _, high, geoms = object_vertical_bounds(
+        sim, SimpleNamespace(name=body_name, root_body=body_name), data.xquat[root])
+    return float(data.xpos[root, 2] + high), geoms
+
+
 def correct_on_placements(sim, placements, initial_state, regions, movable_names,
-                          fixture_names, workspace_z, *, clearance=0.001):
+                          fixture_names, workspace_z, *, clearance=0.001, workspace_body=None):
     """Return corrected copies and auditable heights, without RNG or simulation.
 
     Dependency ordering is independent of BDDL statement order. Sites and In
@@ -139,6 +153,10 @@ def correct_on_placements(sim, placements, initial_state, regions, movable_names
         support = regions[target]['target'] if target in regions else target
         if support in relations:
             raise ValueError('Site/In child of a corrected movable support is unsupported')
+    nominal_workspace_z = float(workspace_z)
+    workspace_geoms = []
+    if workspace_body is not None and None in relations.values():
+        workspace_z, workspace_geoms = workspace_collision_top(sim, workspace_body)
     corrected = dict(placements)
     corrected_bounds, corrections, pending = {}, [], dict(relations)
 
@@ -173,5 +191,7 @@ def correct_on_placements(sim, placements, initial_state, regions, movable_names
             progressed = True
         if not progressed:
             raise ValueError('Cyclic On placement dependencies')
-    return corrected, {'version': 1, 'mode': 'collision_bounds', 'clearance_m': float(clearance),
+    return corrected, {'version': 2, 'mode': 'collision_bounds', 'clearance_m': float(clearance),
+                       'workspace': {'body': workspace_body, 'nominal_z': nominal_workspace_z,
+                                     'collision_top_z': float(workspace_z), 'geom_ids': workspace_geoms},
                        'adjustments': corrections, 'ignored_relations': unchanged}

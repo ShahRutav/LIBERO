@@ -808,6 +808,9 @@ class BDDLBaseDomain(SingleArmEnv):
                     self.sim, object_placements, self.parsed_problem["initial_state"],
                     self.parsed_problem["regions"], self.objects_dict, self.fixtures_dict,
                     self.workspace_offset[2], clearance=self.placement_height_clearance,
+                    workspace_body={"table": "table", "kitchen": "table",
+                                    "living_room": "living_room_table", "study": "study_table",
+                                    "coffee_table": "coffee_table", "floor": None}[self._arena_type],
                 )
             for obj_pos, obj_quat, obj in object_placements.values():
                 if obj.name not in list(self.fixtures_dict.keys()):
