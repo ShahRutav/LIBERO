@@ -1,0 +1,5 @@
+# Explicit compatibility override for mjlab 1.6's ~=3.11 dependency metadata.
+# Keep synchronized with requirements-mjlab.txt and Sim2Real's third_party/mujoco_warp.lock.
+mujoco==3.12.1.dev974703000
+mujoco-warp @ git+https://github.com/ShahRutav/mujoco_warp.git@cac9e68c6369a5fb9970a12118aec77c27154ffc
+warp-lang==1.15.0

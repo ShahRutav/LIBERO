@@ -1,7 +1,12 @@
 # Runtime for the mjlab backend. Install instead of the legacy training pins.
+# Use uv with --overrides constraints-mjlab.txt; mjlab 1.6 declares older pins.
+--extra-index-url https://py.mujoco.org/
+--extra-index-url https://pypi.nvidia.com/
 mjlab==1.6.0
-mujoco==3.11.0
-mujoco-warp==3.11.0
+mujoco==3.12.1.dev974703000
+# ShahRutav branch: fix/elliptic-regularization-floor (immutable revision below).
+mujoco-warp @ git+https://github.com/ShahRutav/mujoco_warp.git@cac9e68c6369a5fb9970a12118aec77c27154ffc
+warp-lang==1.15.0
 robosuite==1.4.0
 bddl==1.0.1
 gym==0.25.2

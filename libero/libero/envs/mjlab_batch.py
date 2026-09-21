@@ -25,6 +25,8 @@ class LiberoBatchEnv:
     @torch.inference_mode(False)
     def __init__(self, env, initial_states, num_envs, device="cuda:0", horizon=500, seed=0,
                  initial_body_pos=None, initial_body_quat=None, *, stepping_mode="full"):
+        from .mujoco_warp_pin import verify
+        verify()
         import mujoco
         import warp as wp
         from mjlab.sim import Simulation, SimulationCfg

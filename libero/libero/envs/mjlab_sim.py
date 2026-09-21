@@ -21,6 +21,8 @@ class _PreserveOptions:
 
 class MjlabSim(MjSim):
     def __init__(self, model, device="cuda:0"):
+        from .mujoco_warp_pin import verify
+        verify()
         super().__init__(model)
         self.device = device
         self.engine = None

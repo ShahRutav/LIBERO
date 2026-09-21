@@ -14,7 +14,7 @@ Use a Python 3.11 environment on a supported NVIDIA GPU machine. From this
 repository root:
 
 ```bash
-python -m pip install -r requirements-mjlab.txt
+uv pip install --python "$(command -v python)" --overrides constraints-mjlab.txt -r requirements-mjlab.txt
 python -m pip install -e .
 export MUJOCO_GL=egl
 export LIBERO_CONFIG_PATH="$PWD/outputs/libero-config"
@@ -45,6 +45,14 @@ finally:
     env.close()
 PY
 ```
+
+MuJoCo-Warp is pinned to `ShahRutav/mujoco_warp`, branch
+`fix/elliptic-regularization-floor`, commit
+`cac9e68c6369a5fb9970a12118aec77c27154ffc`. Install the commit, not the
+moving branch name. The explicit override is needed because mjlab 1.6 still
+declares MuJoCo/MuJoCo-Warp 3.11 dependencies. This newer stack includes
+MuJoCo `3.12.1.dev974703000` and Warp `1.15.0`. The legacy 3.11 Newton
+fallback must not be enabled without separately qualifying its private API.
 
 The init file above is supplied by this repository. Initial setup creates the default path config
 without prompting when stdin is not a terminal. Use a separate config directory

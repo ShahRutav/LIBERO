@@ -57,3 +57,32 @@ def install_controller_compat():
     if tuple(map(int, mujoco.__version__.split(".")[:2])) >= (3, 11):
         from robosuite.controllers.base_controller import Controller
         Controller.update = _update
+    # Newer MuJoCo enums do not compare equal to NumPy integer scalars.
+    # Robosuite 1.4 compares jnt_type array entries directly with these enums.
+    if tuple(map(int, mujoco.__version__.split(".")[:2])) >= (3, 12):
+        from robosuite.utils.binding_utils import MjModel
+        MjModel.get_joint_qpos_addr = _joint_qpos_addr
+        MjModel.get_joint_qvel_addr = _joint_qvel_addr
+
+
+def _joint_addr(model, name, *, position):
+    joint_id = model.joint_name2id(name)
+    kind = int(model.jnt_type[joint_id])
+    if kind == int(mujoco.mjtJoint.mjJNT_FREE):
+        size = 7 if position else 6
+    elif kind == int(mujoco.mjtJoint.mjJNT_BALL):
+        size = 4 if position else 3
+    elif kind in (int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE)):
+        size = 1
+    else:
+        raise ValueError(f"Unsupported joint type {kind} for {name}")
+    address = int((model.jnt_qposadr if position else model.jnt_dofadr)[joint_id])
+    return address if size == 1 else (address, address + size)
+
+
+def _joint_qpos_addr(self, name):
+    return _joint_addr(self, name, position=True)
+
+
+def _joint_qvel_addr(self, name):
+    return _joint_addr(self, name, position=False)
