@@ -58,6 +58,10 @@ class LiberoBatchEnv:
                     if value is not None}
         self.engine = Simulation(num_envs, SimulationCfg(mujoco=_PreserveOptions(), **capacity),
                                  model=self.model, device=str(device))
+        import mujoco_warp as mjw
+        self._wp = wp
+        self._capacity_overflow_mask = ~(int(mjw.OverflowType.ITERATIONS)
+                                         | int(mjw.OverflowType.LS_ITERATIONS))
         if (initial_body_pos is None) != (initial_body_quat is None):
             raise ValueError("Both body pose banks are required")
         self._body_pose_banks = {}
@@ -295,12 +299,18 @@ class LiberoBatchEnv:
             self.elapsed += 1
             obs = self._observe()
             finite = torch.isfinite(obs).all(-1)
-            invalid = ~finite | self.controller.invalid_controller
+            overflow = self._wp.to_torch(self.engine.wp_data.overflow).reshape(self.num_envs, -1)
+            capacity_overflow = ((overflow & self._capacity_overflow_mask) != 0).any(-1)
+            invalid = ~finite | self.controller.invalid_controller | capacity_overflow
             success = self._success() & ~invalid
             terminated = success | invalid
             truncated = (self.elapsed >= self.horizon) & ~terminated
             self.done.copy_(terminated | truncated)
-            return obs, success.float(), terminated, truncated, {"success": success, "invalid_state": invalid}
+            return obs, success.float(), terminated, truncated, {
+                "success": success,
+                "invalid_state": invalid,
+                "capacity_overflow": capacity_overflow,
+            }
 
     def restore_recorded_state(self, raw_state, previous_action=None):
         """Teacher-forced reference state with action-prefix controller memory."""
